@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows10.0.22621.0</TargetFramework>
+    <RuntimeIdentifiers>win-x64;win-x86</RuntimeIdentifiers>
+    <UseWinUI>true</UseWinUI>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <WindowsPackageType>None</WindowsPackageType>
+    <RootNamespace>WindowsEthernetControl</RootNamespace>
+    <AssemblyName>WindowsExtendQuickSetting</AssemblyName>
+    <Product>WindowsExtendQuickSetting</Product>
+    <Title>WindowsExtendQuickSetting</Title>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
+    <DefaultLanguage>zh-CN</DefaultLanguage>
+    <WindowsSdkPackageVersion>10.0.22621.47</WindowsSdkPackageVersion>
+    <ApplicationIcon>Assets\NetworkControlIcon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.240923002" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
+    <PackageReference Include="H.NotifyIcon.WinUI" Version="2.1.4" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Remove="publish\**" />
+    <Content Include="Assets\NetworkControlIcon.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\NetworkControlIcon.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\NetworkControlIconLight.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\NetworkControlIconDark.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

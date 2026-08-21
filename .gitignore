@@ -1,0 +1,12 @@
+.vs/
+**/bin/
+**/obj/
+**/publish/
+release/
+*.user
+*.suo
+*.pdb
+*.obj
+*.res
+vs_error.txt
+vs_list.txt

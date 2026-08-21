@@ -1,0 +1,3 @@
+#include <windows.h>
+1 ICON "..\\WindowsEthernetControl\\Assets\\NetworkControlIcon.ico"
+101 RCDATA "..\\release\\lite-payload.zip"
