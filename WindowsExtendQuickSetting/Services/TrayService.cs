@@ -1,4 +1,4 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 using System.Diagnostics;
 using System.Threading;
 using Microsoft.Win32;
@@ -139,8 +139,7 @@ public class TrayService
                     _popup = new QuickSettingsPopup();
                     _popup.Closed += (s, e) => _popup = null;
                 }
-                _popup.Activate();
-                _popup.PositionNearTray();
+                _popup.ShowAndActivate();
                 _popup.ShowSettingsPage();
             }
             catch (Exception ex)
@@ -161,8 +160,7 @@ public class TrayService
                     _popup = new QuickSettingsPopup();
                     _popup.Closed += (s, e) => _popup = null;
                 }
-                _popup.PositionNearTray();
-                _popup.Activate();
+                _popup.ShowAndActivate();
             }
             catch (Exception ex)
             {

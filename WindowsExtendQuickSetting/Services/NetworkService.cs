@@ -36,7 +36,12 @@ public class NetworkService
 
     public List<NetworkAdapter> GetEthernetAdapters()
     {
-        lock (_syncRoot) return _adapters.Where(a => a.IsEthernet).ToList();
+        lock (_syncRoot) return _adapters.Where(a => a.IsEthernet && !a.IsUsbTethering).ToList();
+    }
+
+    public List<NetworkAdapter> GetUsbTetheringAdapters()
+    {
+        lock (_syncRoot) return _adapters.Where(a => a.IsUsbTethering).ToList();
     }
 
     public List<NetworkAdapter> GetWirelessAdapters()
@@ -172,6 +177,46 @@ public class NetworkService
             return match.Success ? match.Groups[1].Value.Trim() : null;
         }
         catch { return null; }
+    }
+
+    public static async Task<List<string>> GetAvailableWifiNetworksAsync()
+    {
+        var output = await RunNetshReadOnlyAsync("wlan show networks mode=bssid");
+        return Regex.Matches(output ?? "", @"(?im)^s*SSIDs+d+s*:s*(.+?)s*$")
+            .Select(match => match.Groups[1].Value.Trim())
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    public static Task<bool> DisconnectWifiAsync(string interfaceName) =>
+        RunNetshUserCommand($"wlan disconnect interface={QuoteInterfaceName(interfaceName)}");
+
+    public static Task<bool> ConnectWifiAsync(string profileName, string interfaceName) =>
+        RunNetshUserCommand($"wlan connect name={QuoteInterfaceName(profileName)} interface={QuoteInterfaceName(interfaceName)}");
+
+    private static async Task<string?> RunNetshReadOnlyAsync(string arguments)
+    {
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo { FileName = "netsh", Arguments = arguments, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true });
+            if (process == null) return null;
+            var output = await process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            return process.ExitCode == 0 ? output : null;
+        }
+        catch { return null; }
+    }
+
+    private static async Task<bool> RunNetshUserCommand(string arguments)
+    {
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo { FileName = "netsh", Arguments = arguments, UseShellExecute = false, CreateNoWindow = true });
+            if (process == null) return false;
+            await process.WaitForExitAsync();
+            return process.ExitCode == 0;
+        }
+        catch { return false; }
     }
 
     private static async Task<bool> RunNetshCommand(string arguments)

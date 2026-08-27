@@ -19,6 +19,15 @@ public class NetworkAdapter
         or NetworkInterfaceType.GigabitEthernet
         or NetworkInterfaceType.FastEthernetFx;
     public bool IsWireless => Type == NetworkInterfaceType.Wireless80211;
+    public bool IsUsbTethering
+    {
+        get
+        {
+            var value = $"{Name} {Description}";
+            return IsEthernet && new[] { "rndis", "usb", "mobile", "android", "iphone", "apple", "tether" }
+                .Any(keyword => value.Contains(keyword, StringComparison.OrdinalIgnoreCase));
+        }
+    }
     public bool IsUp => Status == OperationalStatus.Up;
 
     public string SpeedText => Speed switch

@@ -22,6 +22,7 @@ public sealed partial class QuickSettingsPopup : Window
     private NetworkAdapter? _selectedAdapter;
     private NetworkAdapter? _selectedWirelessAdapter;
     private NetworkAdapter? _activeNetworkAdapter;
+    private NetworkAdapter? _selectedUsbAdapter;
     private bool _isEthernetEnabled = true;
     private bool _isOperationInProgress;
     private AppWindow? _appWindow;
@@ -35,12 +36,15 @@ public sealed partial class QuickSettingsPopup : Window
     private TextBlock? _adapterIpText;
     private Button? _toggleBtn;
     private Button? _wifiButton;
+    private Button? _usbButton;
     private Button? _ethernetExpandButton;
     private Button? _wifiExpandButton;
+    private Button? _usbExpandButton;
     private Button? _bluetoothButton;
     private Button? _bluetoothExpandButton;
     private TextBlock? _ethernetCaption;
     private TextBlock? _wifiCaption;
+    private TextBlock? _usbCaption;
     private TextBlock? _bluetoothCaption;
     private TextBlock? _bluetoothStatus;
     private TextBlock? _networkNameText;
@@ -54,6 +58,7 @@ public sealed partial class QuickSettingsPopup : Window
     private Radio? _bluetoothRadio;
     private Border? _adapterDetailsCard;
     private bool _showWirelessDetails;
+    private bool _showUsbDetails;
     private TextBlock? _titleText;
     private Button? _navigationButton;
     private bool _showingSettings;
@@ -166,7 +171,7 @@ public sealed partial class QuickSettingsPopup : Window
             if (_appWindow == null) return;
             var workArea = DisplayArea.Primary.WorkArea;
             var panelW = 367;
-            var panelH = _showingSettings ? 650 : _adapterDetailsCard?.Visibility == Visibility.Visible ? 590 : 500;
+            var panelH = _showingSettings ? 650 : _adapterDetailsCard?.Visibility == Visibility.Visible ? 660 : 570;
             var x = workArea.X + workArea.Width - panelW - 16;
             var y = workArea.Y + workArea.Height - panelH - 8;
             if (x < workArea.X) x = workArea.X;
@@ -189,7 +194,7 @@ public sealed partial class QuickSettingsPopup : Window
             var workArea = DisplayArea.Primary.WorkArea;
             const int targetWidth = 367;
             var targetHeight = _showingSettings ? 650
-                : _adapterDetailsCard?.Visibility == Visibility.Visible ? 590 : 500;
+                : _adapterDetailsCard?.Visibility == Visibility.Visible ? 660 : 570;
             var targetX = workArea.X + workArea.Width - targetWidth - 16;
             var targetY = workArea.Y + workArea.Height - targetHeight - 8;
             var start = _appWindow.Position;
@@ -240,6 +245,8 @@ public sealed partial class QuickSettingsPopup : Window
         var quickGrid = new Grid { ColumnSpacing = 12 };
         for (var i = 0; i < 3; i++)
             quickGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        quickGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        quickGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         var ethernetTile = CreateSplitTile("\uE839", isZh ? "未连接" : "Disconnected", out _toggleBtn, out _ethernetExpandButton, out _ethernetCaption);
         _toggleBtn.Click += EthernetToggle_Click;
@@ -259,6 +266,12 @@ public sealed partial class QuickSettingsPopup : Window
             : "Bluetooth device management will be available in a later version";
         Grid.SetColumn(bluetoothTile, 2);
         quickGrid.Children.Add(bluetoothTile);
+
+        var usbTile = CreateSplitTile("\uE88E", isZh ? "未连接" : "Disconnected", out _usbButton, out _usbExpandButton, out _usbCaption);
+        _usbButton.Click += UsbToggle_Click;
+        _usbExpandButton.Click += (_, _) => ShowUsbDetails();
+        Grid.SetRow(usbTile, 1);
+        quickGrid.Children.Add(usbTile);
         CardsPanel.Children.Add(quickGrid);
 
         var networkInfo = new StackPanel { Spacing = 5 };
@@ -400,10 +413,12 @@ public sealed partial class QuickSettingsPopup : Window
     {
         var ethernetAdapters = _networkService.GetEthernetAdapters();
         var wirelessAdapters = _networkService.GetWirelessAdapters();
+        var usbAdapters = _networkService.GetUsbTetheringAdapters();
         var isZh = App.Settings.Settings.Language == "zh-CN";
         _selectedAdapter = ethernetAdapters.FirstOrDefault(a => a.IsUp) ?? ethernetAdapters.FirstOrDefault();
         _selectedWirelessAdapter = wirelessAdapters.FirstOrDefault(a => a.IsUp) ?? wirelessAdapters.FirstOrDefault();
-        _activeNetworkAdapter = ethernetAdapters.Concat(wirelessAdapters)
+        _selectedUsbAdapter = usbAdapters.FirstOrDefault(a => a.IsUp) ?? usbAdapters.FirstOrDefault();
+        _activeNetworkAdapter = ethernetAdapters.Concat(wirelessAdapters).Concat(usbAdapters)
             .Where(a => a.IsUp)
             .OrderByDescending(a => a.Gateways.Count > 0)
             .FirstOrDefault();
@@ -429,10 +444,23 @@ public sealed partial class QuickSettingsPopup : Window
             if (wifiEnabled) _ = RefreshWifiCaptionAsync();
         }
 
+        if (_usbButton != null)
+        {
+            _usbButton.IsEnabled = _selectedUsbAdapter != null;
+            var usbEnabled = _selectedUsbAdapter?.IsUp == true;
+            _usbButton.Background = usbEnabled ? ActiveBrush : InactiveBrush;
+            if (_usbExpandButton != null) _usbExpandButton.Background = usbEnabled ? ActiveBrush : InactiveBrush;
+            _usbButton.Content = new FontIcon { Glyph = "\uE88E", FontSize = 17 };
+            if (_usbCaption != null) _usbCaption.Text = usbEnabled ? (isZh ? "USB 网络共享" : "USB tethering") : (isZh ? "未连接" : "Disconnected");
+        }
+
         UpdateToggleVisual();
         UpdateNetworkDetails();
         if (_adapterDetailsCard?.Visibility == Visibility.Visible)
-            PopulateAdapterDetails(_showWirelessDetails);
+        {
+            if (_showUsbDetails) PopulateUsbAdapterDetails();
+            else PopulateAdapterDetails(_showWirelessDetails);
+        }
     }
 
     private void UpdateNetworkDetails()
@@ -446,7 +474,7 @@ public sealed partial class QuickSettingsPopup : Window
             _networkDnsText.Text = "";
             return;
         }
-        var type = _activeNetworkAdapter.IsWireless ? "Wi-Fi" : (isZh ? "有线网络" : "Ethernet");
+        var type = _activeNetworkAdapter.IsWireless ? "Wi-Fi" : (_activeNetworkAdapter.IsUsbTethering ? (isZh ? "USB 网络共享" : "USB tethering") : (isZh ? "有线网络" : "Ethernet"));
         _networkNameText.Text = $"{type} · {_activeNetworkAdapter.Name}";
         _networkAddressText.Text = $"IP: {_activeNetworkAdapter.IpAddresses.FirstOrDefault() ?? "—"}    " +
             $"{(isZh ? "网关" : "Gateway")}: {_activeNetworkAdapter.Gateways.FirstOrDefault() ?? "—"}";
@@ -500,6 +528,35 @@ public sealed partial class QuickSettingsPopup : Window
             : (isZh ? "有线网卡已关闭" : "Ethernet off"));
     }
 
+    public void ShowAndActivate()
+    {
+        PositionNearTray();
+        Activate();
+        var hwnd = WindowNative.GetWindowHandle(this);
+        PopupNativeMethods.ShowWindow(hwnd, 9);
+        PopupNativeMethods.BringWindowToTop(hwnd);
+        PopupNativeMethods.SetForegroundWindow(hwnd);
+    }
+
+    private void ShowUsbDetails()
+    {
+        if (_adapterDetailsCard == null) return;
+        if (_adapterDetailsCard.Visibility == Visibility.Visible && _showUsbDetails)
+        {
+            _adapterDetailsCard.Visibility = Visibility.Collapsed;
+            SetExpandRotation(_usbExpandButton, 0);
+            AnimatePositionNearTray();
+            return;
+        }
+        _showUsbDetails = true;
+        _showWirelessDetails = false;
+        _adapterDetailsCard.Visibility = Visibility.Visible;
+        SetExpandRotation(_ethernetExpandButton, 0);
+        SetExpandRotation(_wifiExpandButton, 0);
+        SetExpandRotation(_usbExpandButton, 90);
+        PopulateUsbAdapterDetails();
+        AnimatePositionNearTray();
+    }
     private void ShowAdapterDetails(bool wireless)
     {
         if (_adapterDetailsCard == null) return;
@@ -511,9 +568,11 @@ public sealed partial class QuickSettingsPopup : Window
             return;
         }
         _showWirelessDetails = wireless;
+        _showUsbDetails = false;
         _adapterDetailsCard.Visibility = Visibility.Visible;
         SetExpandRotation(_ethernetExpandButton, wireless ? 0 : 90);
         SetExpandRotation(_wifiExpandButton, wireless ? 90 : 0);
+        SetExpandRotation(_usbExpandButton, 0);
         PopulateAdapterDetails(wireless);
         AnimatePositionNearTray();
     }
@@ -533,8 +592,34 @@ public sealed partial class QuickSettingsPopup : Window
         _adapterListPanel?.Children.Clear();
         foreach (var adapter in adapters)
             _adapterListPanel?.Children.Add(CreateAdapterItem(adapter));
+        if (wireless) _adapterListPanel?.Children.Add(CreateWifiNetworkControls());
     }
 
+    private void PopulateUsbAdapterDetails()
+    {
+        var adapters = _networkService.GetUsbTetheringAdapters();
+        _selectedAdapter = _selectedUsbAdapter = adapters.FirstOrDefault(a => a.IsUp) ?? adapters.FirstOrDefault();
+        UpdateSelectedAdapterInfo();
+        _adapterListPanel?.Children.Clear();
+        foreach (var adapter in adapters)
+            _adapterListPanel?.Children.Add(CreateAdapterItem(adapter));
+    }
+
+    private async void UsbToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedUsbAdapter == null || _isOperationInProgress) return;
+        _isOperationInProgress = true;
+        if (_usbButton != null) _usbButton.IsEnabled = false;
+        var success = _selectedUsbAdapter.IsUp
+            ? await NetworkService.DisableAdapterAsync(_selectedUsbAdapter.InterfaceName)
+            : await NetworkService.EnableAdapterAsync(_selectedUsbAdapter.InterfaceName);
+        StatusText.Text = success
+            ? (App.Settings.Settings.Language == "zh-CN" ? "USB 网络共享操作成功" : "USB tethering updated")
+            : (App.Settings.Settings.Language == "zh-CN" ? "USB 网络共享操作失败" : "USB tethering operation failed");
+        _networkService.RefreshAdapters();
+        _isOperationInProgress = false;
+        if (_usbButton != null) _usbButton.IsEnabled = true;
+    }
     private Border CreateAdapterItem(NetworkAdapter adapter)
     {
         var isZh = App.Settings.Settings.Language == "zh-CN";
@@ -626,6 +711,52 @@ public sealed partial class QuickSettingsPopup : Window
         return border;
     }
 
+    private Border CreateWifiNetworkControls()
+    {
+        var isZh = App.Settings.Settings.Language == "zh-CN";
+        var panel = new StackPanel { Spacing = 6 };
+        panel.Children.Add(new TextBlock { Text = isZh ? "Wi-Fi 网络" : "Wi-Fi networks", FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        _ = PopulateWifiNetworksAsync(panel, isZh);
+        return new Border
+        {
+            Background = new SolidColorBrush(Color.FromArgb(24, 255, 255, 255)), CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(10, 8, 10, 8), Child = panel
+        };
+    }
+
+    private async Task PopulateWifiNetworksAsync(StackPanel panel, bool isZh)
+    {
+        var adapter = _selectedWirelessAdapter;
+        if (adapter == null) return;
+        var ssid = await NetworkService.GetConnectedWifiSsidAsync();
+        if (!string.IsNullOrWhiteSpace(ssid))
+        {
+            var disconnect = new Button { Content = isZh ? $"断开 {ssid}" : $"Disconnect {ssid}", HorizontalAlignment = HorizontalAlignment.Stretch };
+            disconnect.Click += async (_, _) =>
+            {
+                disconnect.IsEnabled = false;
+                var success = await NetworkService.DisconnectWifiAsync(adapter.InterfaceName);
+                StatusText.Text = success ? (isZh ? "Wi-Fi 已断开" : "Wi-Fi disconnected") : (isZh ? "断开失败" : "Disconnect failed");
+                _networkService.RefreshAdapters();
+            };
+            panel.Children.Add(disconnect);
+        }
+        panel.Children.Add(new TextBlock { Text = isZh ? "可用网络" : "Available networks", FontSize = 11, Opacity = 0.7, Margin = new Thickness(0, 4, 0, 0) });
+        var networks = await NetworkService.GetAvailableWifiNetworksAsync();
+        if (networks.Count == 0) panel.Children.Add(new TextBlock { Text = isZh ? "未发现网络" : "No networks found", FontSize = 11, Opacity = 0.7 });
+        foreach (var network in networks.Take(8))
+        {
+            var connect = new Button { Content = network, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left };
+            connect.Click += async (_, _) =>
+            {
+                connect.IsEnabled = false;
+                var success = await NetworkService.ConnectWifiAsync(network, adapter.InterfaceName);
+                StatusText.Text = success ? (isZh ? $"正在连接 {network}" : $"Connecting to {network}") : (isZh ? "连接失败：请先在 Windows 中保存此网络" : "Connection failed: save this network in Windows first");
+                _networkService.RefreshAdapters();
+            };
+            panel.Children.Add(connect);
+        }
+    }
     private void UpdateSelectedAdapterInfo()
     {
         var isZh = App.Settings.Settings.Language == "zh-CN";
@@ -1007,6 +1138,13 @@ public sealed partial class QuickSettingsPopup : Window
             HorizontalAlignment = HorizontalAlignment.Stretch, Child = grid
         };
     }
+}
+
+internal static class PopupNativeMethods
+{
+    [System.Runtime.InteropServices.DllImport("user32.dll")] internal static extern bool ShowWindow(IntPtr hwnd, int command);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] internal static extern bool BringWindowToTop(IntPtr hwnd);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] internal static extern bool SetForegroundWindow(IntPtr hwnd);
 }
 
 internal static class Win32PInvoke
