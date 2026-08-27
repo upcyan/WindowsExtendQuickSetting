@@ -1,12 +1,35 @@
+# IDE and user settings
 .vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build output
 **/bin/
 **/obj/
 **/publish/
+**/[Dd]ebug/
+**/[Rr]elease/
+AppPackages/
+TestResults/
+
+# Native launcher intermediates
+native-launcher/*.obj
+native-launcher/*.res
+native-launcher/*.exe
+native-launcher/*.pdb
+
+# Local packages and diagnostics
 release/
-*.user
-*.suo
+dsh-usage/
+*.log
+vs_error.txt
+vs_list.txt
+fix*.ps1
+
+# Compiler symbols
 *.pdb
 *.obj
 *.res
-vs_error.txt
-vs_list.txt
