@@ -40,7 +40,7 @@ dotnet build -c Debug
 ## 项目结构
 
 ```
-WindowsEthernetControl/
+WindowsExtendQuickSetting/
 ├── App.xaml / App.xaml.cs          # 应用入口，权限检查
 ├── Helpers/
 │   └── ElevateHelper.cs            # UAC 提权

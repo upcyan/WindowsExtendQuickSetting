@@ -3,7 +3,7 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net9.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
-    <ApplicationIcon>..\WindowsEthernetControl\Assets\NetworkControlIcon.ico</ApplicationIcon>
+    <ApplicationIcon>..\WindowsExtendQuickSetting\Assets\NetworkControlIcon.ico</ApplicationIcon>
     <AssemblyName>WindowsExtendQuickSetting.LiteLauncher</AssemblyName>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
