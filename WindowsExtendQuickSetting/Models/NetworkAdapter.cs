@@ -24,7 +24,7 @@ public class NetworkAdapter
         get
         {
             var value = $"{Name} {Description}";
-            return IsEthernet && new[] { "rndis", "usb", "mobile", "android", "iphone", "apple", "tether" }
+            return IsEthernet && new[] { "rndis", "mobile", "android", "iphone", "apple", "tether" }
                 .Any(keyword => value.Contains(keyword, StringComparison.OrdinalIgnoreCase));
         }
     }

@@ -13,7 +13,7 @@
         <TextBlock Grid.Row="0" Text="设置 / Settings" FontSize="24" FontWeight="Bold"/>
 
         <StackPanel Grid.Row="1" Spacing="12">
-            <Border Background="#FF333333" CornerRadius="8" Padding="14,10">
+            <Border Background="#FF333333" CornerRadius="10" Padding="14,10">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
@@ -28,7 +28,7 @@
                 </Grid>
             </Border>
 
-            <Border Background="#FF333333" CornerRadius="8" Padding="14,10">
+            <Border Background="#FF333333" CornerRadius="10" Padding="14,10">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
@@ -44,10 +44,10 @@
                 </Grid>
             </Border>
 
-            <Border Background="#FF333333" CornerRadius="8" Padding="14,10">
+            <Border Background="#FF333333" CornerRadius="10" Padding="14,10">
                 <StackPanel>
                     <TextBlock Text="关于 / About" FontSize="14" FontWeight="SemiBold" Foreground="White"/>
-                    <TextBlock Text="Windows Ethernet Control v1.0" FontSize="12" Foreground="#AAAAAA" Margin="0,4,0,0"/>
+                    <TextBlock x:Name="VersionText" FontSize="12" Foreground="#AAAAAA" Margin="0,4,0,0"/>
                     <TextBlock Text="有线网卡控制工具" FontSize="12" Foreground="#AAAAAA"/>
                 </StackPanel>
             </Border>

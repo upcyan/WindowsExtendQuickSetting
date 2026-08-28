@@ -17,6 +17,7 @@ public class TrayService
     private const int WM_LBUTTONUP = 0x0202;
     private const int WM_RBUTTONUP = 0x0205;
     private const int WM_CONTEXTMENU = 0x007B;
+    private static readonly Guid TrayIconGuid = new("7E67D7A3-09CC-4CB2-9DB0-D0ECDA8CC63D");
 
     private delegate IntPtr WndProcDelegate(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
@@ -48,13 +49,16 @@ public class TrayService
             cbSize = (uint)Marshal.SizeOf<NOTIFYICONDATA>(),
             hWnd = _hWnd,
             uID = 1,
-            uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP,
+            uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_GUID,
             uCallbackMessage = WM_TRAYICON,
             hIcon = LoadTrayIcon(),
-            szTip = "WindowsExtendQuickSetting"
+            szTip = "WindowsExtendQuickSetting",
+            guidItem = TrayIconGuid
         };
 
         NativeMethods.Shell_NotifyIcon(NIM_ADD, ref _nid);
+        _nid.uTimeoutOrVersion = NOTIFYICON_VERSION_4;
+        NativeMethods.Shell_NotifyIcon(NIM_SETVERSION, ref _nid);
 
         MSG msg;
         while (NativeMethods.GetMessage(out msg, IntPtr.Zero, 0, 0))
@@ -86,7 +90,7 @@ public class TrayService
     {
         var iconName = IsLightTaskbar() ? "NetworkControlIconDark.ico" : "NetworkControlIconLight.ico";
         var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", iconName);
-        var icon = NativeMethods.LoadImage(IntPtr.Zero, iconPath, IMAGE_ICON, 32, 32, LR_LOADFROMFILE);
+        var icon = NativeMethods.LoadImage(IntPtr.Zero, iconPath, IMAGE_ICON, 33, 33, LR_LOADFROMFILE);
         return icon != IntPtr.Zero ? icon : CreateBlueIcon();
     }
 
@@ -107,7 +111,7 @@ public class TrayService
             int mouseMsg = (int)(lParam.ToInt64() & 0xFFFF);
             if (mouseMsg == WM_LBUTTONUP)
             {
-                ShowPopup();
+                TogglePopup();
             }
             else if (mouseMsg == WM_RBUTTONUP || mouseMsg == WM_CONTEXTMENU)
             {
@@ -149,7 +153,7 @@ public class TrayService
         });
     }
 
-    private void ShowPopup()
+    public void ShowPopup()
     {
         App.MainDispatcherQueue?.TryEnqueue(() =>
         {
@@ -165,6 +169,27 @@ public class TrayService
             catch (Exception ex)
             {
                 Debug.WriteLine($"Failed to show quick settings: {ex}");
+                _popup = null;
+            }
+        });
+    }
+
+    private void TogglePopup()
+    {
+        App.MainDispatcherQueue?.TryEnqueue(() =>
+        {
+            try
+            {
+                if (_popup == null)
+                {
+                    _popup = new QuickSettingsPopup();
+                    _popup.Closed += (s, e) => _popup = null;
+                }
+                _popup.ToggleVisibility();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Failed to toggle quick settings: {ex}");
                 _popup = null;
             }
         });
@@ -214,8 +239,8 @@ public class TrayService
     [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam; public IntPtr lParam; public uint time; public POINT pt; }
     [StructLayout(LayoutKind.Sequential)] struct ICONINFO { public bool fIcon; public int xHotspot; public int yHotspot; public IntPtr hbmMask; public IntPtr hbmColor; }
 
-    const uint NIF_ICON = 0x02, NIF_MESSAGE = 0x01, NIF_TIP = 0x04;
-    const uint NIM_ADD = 0x00, NIM_DELETE = 0x02;
+    const uint NIF_ICON = 0x02, NIF_MESSAGE = 0x01, NIF_TIP = 0x04, NIF_GUID = 0x20;
+    const uint NIM_ADD = 0x00, NIM_DELETE = 0x02, NIM_SETVERSION = 0x04, NOTIFYICON_VERSION_4 = 4;
     const uint MF_STRING = 0x00, MF_SEPARATOR = 0x0800;
     const uint TPM_RETURNCMD = 0x0100, TPM_NONOTIFY = 0x0080;
     const uint IMAGE_ICON = 1, LR_LOADFROMFILE = 0x0010;

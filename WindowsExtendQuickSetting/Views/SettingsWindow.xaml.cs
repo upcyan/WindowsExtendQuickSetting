@@ -34,6 +34,8 @@ public sealed partial class SettingsWindow : Window
 
         StartToggle.IsOn = _settings.IsStartWithWindowsEnabled();
         LangCombo.SelectedIndex = _settings.Settings.Language == "zh-CN" ? 0 : 1;
+        var version = typeof(App).Assembly.GetName().Version;
+        VersionText.Text = version == null ? "WindowsExtendQuickSetting" : $"WindowsExtendQuickSetting {version.Major}.{version.Minor}.{version.Build}";
     }
 
     private void StartToggle_Toggled(object sender, RoutedEventArgs e)

@@ -10,6 +10,8 @@
     <WindowsPackageType>None</WindowsPackageType>
     <RootNamespace>WindowsEthernetControl</RootNamespace>
     <AssemblyName>WindowsExtendQuickSetting</AssemblyName>
+    <!-- Single-instance upgrade prompt compares this version against running instances. Bump per release. -->
+    <Version>1.2.14</Version>
     <Product>WindowsExtendQuickSetting</Product>
     <Title>WindowsExtendQuickSetting</Title>
     <ApplicationManifest>app.manifest</ApplicationManifest>

@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <wininet.h>
+#include <wincrypt.h>
 #include <filesystem>
 #include <string>
 #include <thread>
@@ -17,11 +18,15 @@ constexpr int kStatusControlId = 1001;
 constexpr int kProgressControlId = 1002;
 constexpr wchar_t kDotNetUrl[] = L"https://aka.ms/dotnet/9.0/windowsdesktop-runtime-win-x64.exe";
 constexpr wchar_t kAppRuntimeUrl[] = L"https://download.microsoft.com/download/8a854124-ff27-48d0-b82e-e819feb247bd/WindowsAppRuntimeInstall-x64.exe";
+constexpr wchar_t kDotNetWingetId[] = L"Microsoft.DotNet.DesktopRuntime.9";
+constexpr wchar_t kAppRuntimeWingetId[] = L"Microsoft.WindowsAppRuntime.1.6";
 
 struct InstallContext
 {
     HWND window{};
     bool succeeded{};
+    bool installDotNet{};
+    bool installAppRuntime{};
 };
 
 HBRUSH ProgressBackground()
@@ -92,11 +97,48 @@ void SetProgress(HWND window, int value)
     PostMessageW(window, kProgressMessage, static_cast<WPARAM>(value), 0);
 }
 
+std::wstring GetPayloadFingerprint()
+{
+    const auto resource = FindResourceW(nullptr, MAKEINTRESOURCEW(kMainResourceId), RT_RCDATA);
+    if (!resource) return L"missing";
+    const auto size = SizeofResource(nullptr, resource);
+    const auto loaded = LoadResource(nullptr, resource);
+    const auto bytes = static_cast<const unsigned char*>(LockResource(loaded));
+    if (!size || !bytes) return L"invalid";
+
+    HCRYPTPROV provider{};
+    HCRYPTHASH hash{};
+    BYTE digest[32]{};
+    DWORD digestSize = sizeof(digest);
+    if (CryptAcquireContextW(&provider, nullptr, nullptr, PROV_RSA_AES, CRYPT_VERIFYCONTEXT) &&
+        CryptCreateHash(provider, CALG_SHA_256, 0, 0, &hash) &&
+        CryptHashData(hash, bytes, size, 0) &&
+        CryptGetHashParam(hash, HP_HASHVAL, digest, &digestSize, 0))
+    {
+        constexpr wchar_t hex[] = L"0123456789abcdef";
+        std::wstring fingerprint;
+        fingerprint.reserve(digestSize * 2);
+        for (DWORD index = 0; index < digestSize; ++index)
+        {
+            fingerprint.push_back(hex[digest[index] >> 4]);
+            fingerprint.push_back(hex[digest[index] & 0x0f]);
+        }
+        CryptDestroyHash(hash);
+        CryptReleaseContext(provider, 0);
+        return fingerprint;
+    }
+    if (hash) CryptDestroyHash(hash);
+    if (provider) CryptReleaseContext(provider, 0);
+    return L"invalid";
+}
+
 std::filesystem::path GetDataDirectory()
 {
     wchar_t buffer[MAX_PATH]{};
     GetEnvironmentVariableW(L"LOCALAPPDATA", buffer, MAX_PATH);
-    return std::filesystem::path(buffer) / kAppName / L"Lite";
+    // Content-addressed extraction makes every changed embedded payload use a
+    // fresh directory, so an old cached Lite build can never shadow a new one.
+    return std::filesystem::path(buffer) / kAppName / L"Lite" / GetPayloadFingerprint();
 }
 
 bool DownloadFile(const wchar_t* url, const std::filesystem::path& destination, HWND window, const wchar_t* label)
@@ -105,6 +147,15 @@ bool DownloadFile(const wchar_t* url, const std::filesystem::path& destination, 
     if (!internet) return false;
     HINTERNET request = InternetOpenUrlW(internet, url, nullptr, 0, INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE, 0);
     if (!request) { InternetCloseHandle(internet); return false; }
+
+    DWORD statusCode = 0, statusSize = sizeof(statusCode);
+    if (!HttpQueryInfoW(request, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER,
+        &statusCode, &statusSize, nullptr) || statusCode < 200 || statusCode >= 300)
+    {
+        InternetCloseHandle(request);
+        InternetCloseHandle(internet);
+        return false;
+    }
 
     DWORD totalBytes = 0, size = sizeof(totalBytes);
     HttpQueryInfoW(request, HTTP_QUERY_CONTENT_LENGTH | HTTP_QUERY_FLAG_NUMBER, &totalBytes, &size, nullptr);
@@ -128,7 +179,7 @@ bool DownloadFile(const wchar_t* url, const std::filesystem::path& destination, 
     CloseHandle(file);
     InternetCloseHandle(request);
     InternetCloseHandle(internet);
-    return succeeded;
+    return succeeded && downloaded > 0 && (!totalBytes || downloaded == totalBytes);
 }
 
 bool RunElevatedInstaller(const std::filesystem::path& installer, const wchar_t* arguments)
@@ -147,6 +198,37 @@ bool RunElevatedInstaller(const std::filesystem::path& installer, const wchar_t*
     return exitCode == 0 || exitCode == 3010;
 }
 
+std::filesystem::path GetWingetPath()
+{
+    wchar_t buffer[MAX_PATH]{};
+    if (!GetEnvironmentVariableW(L"LOCALAPPDATA", buffer, MAX_PATH)) return {};
+    const auto path = std::filesystem::path(buffer) / L"Microsoft" / L"WindowsApps" / L"winget.exe";
+    // std::filesystem::exists() can throw on these App Execution Alias reparse points.
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    return (attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY)) ? path : std::filesystem::path();
+}
+
+// winget runs unelevated per-user here; package installers elevate themselves via UAC.
+bool WingetInstall(const std::filesystem::path& winget, const wchar_t* packageId)
+{
+    std::wstring arguments = std::wstring(L"install --id ") + packageId +
+        L" --exact --silent --disable-interactivity --accept-package-agreements --accept-source-agreements";
+    STARTUPINFOW startup{ sizeof(startup) };
+    startup.wShowWindow = SW_HIDE;
+    startup.dwFlags = STARTF_USESHOWWINDOW;
+    PROCESS_INFORMATION process{};
+    std::wstring commandLine = L"\"" + winget.wstring() + L"\" " + arguments;
+    if (!CreateProcessW(winget.c_str(), commandLine.data(), nullptr, nullptr, false,
+        CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process)) return false;
+    WaitForSingleObject(process.hProcess, INFINITE);
+    DWORD exitCode = 1;
+    GetExitCodeProcess(process.hProcess, &exitCode);
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return exitCode == 0 || exitCode == 3010;
+}
+
+
 bool RunProcess(const std::wstring& file, const std::wstring& arguments)
 {
     std::wstring commandLine = L"\"" + file + L"\" " + arguments;
@@ -161,12 +243,60 @@ bool RunProcess(const std::wstring& file, const std::wstring& arguments)
     return exitCode == 0;
 }
 
-bool InstallDependenciesWithProgress()
+// .NET Desktop Runtime 9 (x64): pure filesystem probe of the shared framework store.
+// A higher major runtime alone does not satisfy the default .NET major roll-forward policy.
+bool IsDotNetDesktopRuntimeInstalled()
+{
+    wchar_t buffer[MAX_PATH]{};
+    if (!ExpandEnvironmentStringsW(L"%ProgramFiles%\\dotnet\\shared\\Microsoft.WindowsDesktop.App", buffer, MAX_PATH)) return false;
+    const std::filesystem::path root = buffer;
+    std::error_code ec;
+    if (!std::filesystem::exists(root, ec)) return false;
+    for (const auto& entry : std::filesystem::directory_iterator(root, ec))
+    {
+        if (!entry.is_directory(ec)) continue;
+        int major = 0;
+        if (swscanf_s(entry.path().filename().c_str(), L"%d", &major) == 1 && major == 9) return true;
+    }
+    return false;
+}
+
+// Windows App Runtime: canonical probe via the bootstrap DLL shipped with the app.
+// MddBootstrapInitialize2 succeeds only when a compatible runtime is registered for the machine.
+typedef HRESULT(WINAPI* MddBootstrapInitialize2Fn)(UINT32 majorMinorVersion, PCWSTR versionTag, ULONGLONG minVersion, UINT32 options);
+typedef VOID(WINAPI* MddBootstrapShutdownFn)();
+bool IsWindowsAppRuntimeInstalled(const std::filesystem::path& dataDirectory)
+{
+    const auto dll = dataDirectory / L"Microsoft.WindowsAppRuntime.Bootstrap.dll";
+    HMODULE module = LoadLibraryW(dll.c_str());
+    if (!module)
+    {
+        // Payload not extracted yet; try loading by name from the system search path.
+        module = LoadLibraryW(L"Microsoft.WindowsAppRuntime.Bootstrap.dll");
+    }
+    if (!module) return false;
+
+    const auto initialize = reinterpret_cast<MddBootstrapInitialize2Fn>(GetProcAddress(module, "MddBootstrapInitialize2"));
+    const auto shutdown = reinterpret_cast<MddBootstrapShutdownFn>(GetProcAddress(module, "MddBootstrapShutdown"));
+    bool installed = false;
+    if (initialize)
+    {
+        // 1.6 = 0x00010006
+        installed = SUCCEEDED(initialize(0x00010006, nullptr, 0, 0));
+        if (installed && shutdown) shutdown();
+    }
+    FreeLibrary(module);
+    return installed;
+}
+
+bool InstallDependenciesWithProgress(bool installDotNet, bool installAppRuntime)
 {
     INITCOMMONCONTROLSEX controls{ sizeof(controls), ICC_PROGRESS_CLASS };
     InitCommonControlsEx(&controls);
 
     InstallContext context{};
+    context.installDotNet = installDotNet;
+    context.installAppRuntime = installAppRuntime;
     WNDCLASSEXW windowClass{ sizeof(windowClass) };
     windowClass.lpfnWndProc = ProgressWindowProc;
     windowClass.hInstance = GetModuleHandleW(nullptr);
@@ -188,19 +318,52 @@ bool InstallDependenciesWithProgress()
         std::filesystem::create_directories(temporaryDirectory);
         const auto dotNetInstaller = temporaryDirectory / L"windowsdesktop-runtime.exe";
         const auto appRuntimeInstaller = temporaryDirectory / L"windowsappruntime.exe";
+        const auto winget = GetWingetPath();
 
-        SetProgress(context.window, 1);
-        const bool dotNetDownloaded = DownloadFile(kDotNetUrl, dotNetInstaller, context.window, L".NET Desktop Runtime");
-        if (dotNetDownloaded) PostStatus(context.window, L"正在安装 .NET Desktop Runtime…");
-        const bool dotNetInstalled = dotNetDownloaded && RunElevatedInstaller(dotNetInstaller, L"/install /quiet /norestart");
+        bool dotNetSucceeded = !context.installDotNet;
+        bool appRuntimeSucceeded = !context.installAppRuntime;
 
-        SetProgress(context.window, 1);
-        const bool appRuntimeDownloaded = dotNetInstalled && DownloadFile(kAppRuntimeUrl, appRuntimeInstaller, context.window, L"Windows App Runtime");
-        if (appRuntimeDownloaded) PostStatus(context.window, L"正在安装 Windows App Runtime…");
-        const bool appRuntimeInstalled = appRuntimeDownloaded && RunElevatedInstaller(appRuntimeInstaller, L"--quiet");
-        if (appRuntimeInstalled) PostStatus(context.window, L"依赖已安装完成，正在启动…");
-        SetProgress(context.window, appRuntimeInstalled ? 100 : 0);
-        PostMessageW(context.window, kCompletedMessage, appRuntimeInstalled, 0);
+        // Each dependency: try winget first, fall back to direct URL + official installer.
+        if (context.installDotNet)
+        {
+            SetProgress(context.window, 1);
+            PostStatus(context.window, L"正在通过 winget 安装 .NET Desktop Runtime…");
+            bool installed = !winget.empty() && WingetInstall(winget, kDotNetWingetId);
+            if (!installed)
+            {
+                PostStatus(context.window, L"winget 不可用，正在下载 .NET Desktop Runtime 官方安装器…");
+                SetProgress(context.window, 1);
+                installed = DownloadFile(kDotNetUrl, dotNetInstaller, context.window, L".NET Desktop Runtime") &&
+                    (PostStatus(context.window, L"正在安装 .NET Desktop Runtime…"),
+                     RunElevatedInstaller(dotNetInstaller, L"/install /quiet /norestart"));
+            }
+            dotNetSucceeded = installed;
+            if (!dotNetSucceeded)
+            {
+                PostMessageW(context.window, kCompletedMessage, 0, 0);
+                return;
+            }
+        }
+
+        if (context.installAppRuntime)
+        {
+            SetProgress(context.window, dotNetSucceeded && context.installDotNet ? 50 : 1);
+            PostStatus(context.window, L"正在通过 winget 安装 Windows App Runtime…");
+            bool installed = !winget.empty() && WingetInstall(winget, kAppRuntimeWingetId);
+            if (!installed)
+            {
+                PostStatus(context.window, L"winget 不可用，正在下载 Windows App Runtime 官方安装器…");
+                SetProgress(context.window, 1);
+                installed = DownloadFile(kAppRuntimeUrl, appRuntimeInstaller, context.window, L"Windows App Runtime") &&
+                    (PostStatus(context.window, L"正在安装 Windows App Runtime…"),
+                     RunElevatedInstaller(appRuntimeInstaller, L"--quiet"));
+            }
+            appRuntimeSucceeded = installed;
+        }
+
+        if (appRuntimeSucceeded) PostStatus(context.window, L"依赖已安装完成，正在启动…");
+        SetProgress(context.window, appRuntimeSucceeded ? 100 : 0);
+        PostMessageW(context.window, kCompletedMessage, appRuntimeSucceeded, 0);
     });
 
     MSG message;
@@ -219,7 +382,8 @@ bool ExtractPayload(const std::filesystem::path& destination)
     auto resource = FindResourceW(nullptr, MAKEINTRESOURCEW(kMainResourceId), RT_RCDATA);
     if (!resource) return false;
     auto size = SizeofResource(nullptr, resource);
-    auto data = LoadResource(nullptr, resource);
+    auto loaded = LoadResource(nullptr, resource);
+    auto data = LockResource(loaded);
     if (!size || !data) return false;
 
     std::filesystem::create_directories(destination.parent_path());
@@ -230,6 +394,26 @@ bool ExtractPayload(const std::filesystem::path& destination)
     CloseHandle(file);
     return success;
 }
+
+bool IsPayloadComplete(const std::filesystem::path& directory)
+{
+    return std::filesystem::exists(directory / L".ready") &&
+        std::filesystem::exists(directory / L"WindowsExtendQuickSetting.App.exe") &&
+        std::filesystem::exists(directory / L"WindowsExtendQuickSetting.App.dll") &&
+        std::filesystem::exists(directory / L"WindowsExtendQuickSetting.App.runtimeconfig.json") &&
+        std::filesystem::exists(directory / L"Microsoft.WindowsAppRuntime.Bootstrap.dll") &&
+        std::filesystem::exists(directory / L"resources.pri");
+}
+
+bool MarkPayloadReady(const std::filesystem::path& directory)
+{
+    const auto marker = directory / L".ready";
+    const HANDLE file = CreateFileW(marker.c_str(), GENERIC_WRITE, 0, nullptr,
+        CREATE_ALWAYS, FILE_ATTRIBUTE_HIDDEN, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    CloseHandle(file);
+    return true;
+}
 }
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
@@ -237,43 +421,67 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     const auto dataDirectory = GetDataDirectory();
     const auto mainProgram = dataDirectory / L"WindowsExtendQuickSetting.App.exe";
     const auto payloadArchive = dataDirectory / L"payload.zip";
-    const auto installedMarker = dataDirectory / L"runtime-installed.marker";
 
-    if (!std::filesystem::exists(installedMarker))
+    if (!IsPayloadComplete(dataDirectory))
     {
-        const auto choice = MessageBoxW(nullptr,
-            L"首次运行需要安装 .NET Desktop Runtime 9 和 Microsoft Windows App Runtime 1.6。\n\n"
-            L"点击“确定”后将显示安装进度，并从 Microsoft 官方源自动下载和安装。",
-            kAppName, MB_OKCANCEL | MB_ICONINFORMATION);
-        if (choice != IDOK) return 0;
-
-        if (!InstallDependenciesWithProgress())
+        // Lite is a single-file distribution, but WinUI requires loose native and
+        // resource files at runtime. Materialize them only on the first launch.
+        std::error_code cleanupError;
+        std::filesystem::remove_all(dataDirectory, cleanupError);
+        if (!ExtractPayload(payloadArchive))
         {
-            MessageBoxW(nullptr, L"依赖安装失败。请检查网络连接、winget 和管理员权限。", kAppName, MB_OK | MB_ICONERROR);
+            MessageBoxW(nullptr, L"无法释放轻量程序资源。", kAppName, MB_OK | MB_ICONERROR);
             return 1;
         }
-        std::filesystem::create_directories(dataDirectory);
-        HANDLE marker = CreateFileW(installedMarker.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (marker != INVALID_HANDLE_VALUE) CloseHandle(marker);
-    }
-
-    if (!std::filesystem::exists(mainProgram) && !ExtractPayload(payloadArchive))
-    {
-        MessageBoxW(nullptr, L"无法释放轻量程序资源。", kAppName, MB_OK | MB_ICONERROR);
-        return 1;
-    }
-
-    if (!std::filesystem::exists(mainProgram))
-    {
         const auto command = L"-NoProfile -NonInteractive -WindowStyle Hidden -Command \"Expand-Archive -LiteralPath '" +
             payloadArchive.wstring() + L"' -DestinationPath '" + dataDirectory.wstring() + L"' -Force\"";
-        if (!RunProcess(L"powershell.exe", command) || !std::filesystem::exists(mainProgram))
+        if (!RunProcess(L"powershell.exe", command) ||
+            !std::filesystem::exists(mainProgram) ||
+            !std::filesystem::exists(dataDirectory / L"WindowsExtendQuickSetting.App.dll") ||
+            !std::filesystem::exists(dataDirectory / L"Microsoft.WindowsAppRuntime.Bootstrap.dll") ||
+            !std::filesystem::exists(dataDirectory / L"resources.pri") ||
+            !MarkPayloadReady(dataDirectory))
         {
             MessageBoxW(nullptr, L"无法初始化轻量主程序。", kAppName, MB_OK | MB_ICONERROR);
             return 1;
         }
+        std::error_code removeArchiveError;
+        std::filesystem::remove(payloadArchive, removeArchiveError);
     }
 
-    ShellExecuteW(nullptr, L"open", mainProgram.c_str(), nullptr, dataDirectory.c_str(), SW_SHOWNORMAL);
+    // Detect actual system state every launch; install only what is missing.
+    const bool dotNetOk = IsDotNetDesktopRuntimeInstalled();
+    const bool appRuntimeOk = IsWindowsAppRuntimeInstalled(dataDirectory);
+
+    if (!dotNetOk || !appRuntimeOk)
+    {
+        std::wstring missing;
+        if (!dotNetOk) missing += L"\n· .NET Desktop Runtime 9";
+        if (!appRuntimeOk) missing += L"\n· Microsoft Windows App Runtime 1.6";
+        const std::wstring prompt =
+            std::wstring(L"检测到系统缺少以下依赖：") + missing +
+            L"\n\n点击“确定”后将自动从 Microsoft 官方源下载并安装缺失的组件。";
+        if (MessageBoxW(nullptr, prompt.c_str(), kAppName, MB_OKCANCEL | MB_ICONINFORMATION) != IDOK) return 0;
+
+        if (!InstallDependenciesWithProgress(!dotNetOk, !appRuntimeOk))
+        {
+            MessageBoxW(nullptr, L"依赖安装失败。请检查网络连接和管理员权限。", kAppName, MB_OK | MB_ICONERROR);
+            return 1;
+        }
+        if ((!dotNetOk && !IsDotNetDesktopRuntimeInstalled()) ||
+            (!appRuntimeOk && !IsWindowsAppRuntimeInstalled(dataDirectory)))
+        {
+            MessageBoxW(nullptr, L"依赖安装完成后验证失败，请重启系统后重试。", kAppName, MB_OK | MB_ICONERROR);
+            return 1;
+        }
+    }
+
+    const auto launchResult = reinterpret_cast<INT_PTR>(
+        ShellExecuteW(nullptr, L"open", mainProgram.c_str(), nullptr, dataDirectory.c_str(), SW_SHOWNORMAL));
+    if (launchResult <= 32)
+    {
+        MessageBoxW(nullptr, L"主程序启动失败。", kAppName, MB_OK | MB_ICONERROR);
+        return 1;
+    }
     return 0;
 }

@@ -9,4 +9,6 @@ public class AppSettings
     public bool DnsOverHttpsEnabled { get; set; }
     public List<DohServerEntry> DohServers { get; set; } = new();
     public string? LastSelectedAdapterId { get; set; }
+    public string? PrimaryDohServer { get; set; }
+    public string? BackupDohServer { get; set; }
 }
