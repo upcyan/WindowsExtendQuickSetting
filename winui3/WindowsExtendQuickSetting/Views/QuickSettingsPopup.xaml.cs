@@ -1745,8 +1745,8 @@ public sealed partial class QuickSettingsPopup : Window
         _acrylicController.TintColor = dark
             ? Color.FromArgb(255, 32, 32, 32)
             : Color.FromArgb(255, 243, 243, 243);
-        _acrylicController.TintOpacity = dark ? 0.65f : 0.52f;
-        _acrylicController.LuminosityOpacity = dark ? 0.55f : 0.68f;
+        _acrylicController.TintOpacity = dark ? 0.54f : 0.38f;
+        _acrylicController.LuminosityOpacity = dark ? 0.46f : 0.55f;
         _acrylicController.FallbackColor = dark
             ? Color.FromArgb(255, 32, 32, 32)
             : Color.FromArgb(255, 243, 243, 243);

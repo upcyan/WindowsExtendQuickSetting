@@ -225,7 +225,11 @@ public partial class App : Application
         var currentId = Environment.ProcessId;
         var currentName = Process.GetCurrentProcess().ProcessName;
         // Full and lite distributions use different exe names; treat both as "self".
-        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { currentName, "WindowsExtendQuickSetting", "WindowsExtendQuickSetting.App" };
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            currentName, "WindowsExtendQuickSetting", "WindowsExtendQuickSetting.App",
+            "WindowsExtendQuickSetting.Native"
+        };
         var result = new List<Process>();
         try
         {
