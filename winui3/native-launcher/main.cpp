@@ -10,6 +10,17 @@
 namespace
 {
 constexpr wchar_t kAppName[] = L"WindowsExtendQuickSetting";
+#ifdef FULL_LAUNCHER
+constexpr wchar_t kChannelName[] = L"Full";
+constexpr wchar_t kPayloadExeName[] = L"WindowsExtendQuickSetting.FullApp.exe";
+constexpr wchar_t kPayloadDllName[] = L"WindowsExtendQuickSetting.FullApp.dll";
+constexpr wchar_t kPayloadRuntimeConfigName[] = L"WindowsExtendQuickSetting.FullApp.runtimeconfig.json";
+#else
+constexpr wchar_t kChannelName[] = L"Lite";
+constexpr wchar_t kPayloadExeName[] = L"WindowsExtendQuickSetting.App.exe";
+constexpr wchar_t kPayloadDllName[] = L"WindowsExtendQuickSetting.App.dll";
+constexpr wchar_t kPayloadRuntimeConfigName[] = L"WindowsExtendQuickSetting.App.runtimeconfig.json";
+#endif
 constexpr int kMainResourceId = 101;
 constexpr UINT kStatusMessage = WM_APP + 1;
 constexpr UINT kCompletedMessage = WM_APP + 2;
@@ -136,9 +147,10 @@ std::filesystem::path GetDataDirectory()
 {
     wchar_t buffer[MAX_PATH]{};
     GetEnvironmentVariableW(L"LOCALAPPDATA", buffer, MAX_PATH);
-    // Content-addressed extraction makes every changed embedded payload use a
-    // fresh directory, so an old cached Lite build can never shadow a new one.
-    return std::filesystem::path(buffer) / kAppName / L"Lite" / GetPayloadFingerprint();
+    // Keep the executable identity stable so Windows preserves the user's tray
+    // icon placement. The ready marker contains the payload fingerprint and is
+    // replaced whenever this launcher embeds a new application version.
+    return std::filesystem::path(buffer) / kAppName / kChannelName / L"current";
 }
 
 bool DownloadFile(const wchar_t* url, const std::filesystem::path& destination, HWND window, const wchar_t* label)
@@ -398,10 +410,12 @@ bool ExtractPayload(const std::filesystem::path& destination)
 bool IsPayloadComplete(const std::filesystem::path& directory)
 {
     return std::filesystem::exists(directory / L".ready") &&
-        std::filesystem::exists(directory / L"WindowsExtendQuickSetting.App.exe") &&
-        std::filesystem::exists(directory / L"WindowsExtendQuickSetting.App.dll") &&
-        std::filesystem::exists(directory / L"WindowsExtendQuickSetting.App.runtimeconfig.json") &&
+        std::filesystem::exists(directory / kPayloadExeName) &&
+        std::filesystem::exists(directory / kPayloadDllName) &&
+        std::filesystem::exists(directory / kPayloadRuntimeConfigName) &&
+#ifndef FULL_LAUNCHER
         std::filesystem::exists(directory / L"Microsoft.WindowsAppRuntime.Bootstrap.dll") &&
+#endif
         std::filesystem::exists(directory / L"resources.pri");
 }
 
@@ -411,18 +425,33 @@ bool MarkPayloadReady(const std::filesystem::path& directory)
     const HANDLE file = CreateFileW(marker.c_str(), GENERIC_WRITE, 0, nullptr,
         CREATE_ALWAYS, FILE_ATTRIBUTE_HIDDEN, nullptr);
     if (file == INVALID_HANDLE_VALUE) return false;
+    const auto fingerprint = GetPayloadFingerprint();
+    DWORD written = 0;
+    const bool success = WriteFile(file, fingerprint.data(), static_cast<DWORD>(fingerprint.size() * sizeof(wchar_t)), &written, nullptr) != FALSE;
     CloseHandle(file);
-    return true;
+    return success;
+}
+
+bool IsPayloadCurrent(const std::filesystem::path& directory)
+{
+    const auto marker = directory / L".ready";
+    HANDLE file = CreateFileW(marker.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    wchar_t saved[65]{};
+    DWORD read = 0;
+    const bool success = ReadFile(file, saved, sizeof(saved) - sizeof(wchar_t), &read, nullptr) != FALSE;
+    CloseHandle(file);
+    return success && std::wstring(saved, read / sizeof(wchar_t)) == GetPayloadFingerprint();
 }
 }
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 {
     const auto dataDirectory = GetDataDirectory();
-    const auto mainProgram = dataDirectory / L"WindowsExtendQuickSetting.App.exe";
+    const auto mainProgram = dataDirectory / kPayloadExeName;
     const auto payloadArchive = dataDirectory / L"payload.zip";
 
-    if (!IsPayloadComplete(dataDirectory))
+    if (!IsPayloadComplete(dataDirectory) || !IsPayloadCurrent(dataDirectory))
     {
         // Lite is a single-file distribution, but WinUI requires loose native and
         // resource files at runtime. Materialize them only on the first launch.
@@ -437,8 +466,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             payloadArchive.wstring() + L"' -DestinationPath '" + dataDirectory.wstring() + L"' -Force\"";
         if (!RunProcess(L"powershell.exe", command) ||
             !std::filesystem::exists(mainProgram) ||
-            !std::filesystem::exists(dataDirectory / L"WindowsExtendQuickSetting.App.dll") ||
+            !std::filesystem::exists(dataDirectory / kPayloadDllName) ||
+#ifndef FULL_LAUNCHER
             !std::filesystem::exists(dataDirectory / L"Microsoft.WindowsAppRuntime.Bootstrap.dll") ||
+#endif
             !std::filesystem::exists(dataDirectory / L"resources.pri") ||
             !MarkPayloadReady(dataDirectory))
         {
@@ -449,7 +480,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         std::filesystem::remove(payloadArchive, removeArchiveError);
     }
 
-    // Detect actual system state every launch; install only what is missing.
+    // Lite uses system runtimes; Full embeds them in its payload.
+#ifndef FULL_LAUNCHER
     const bool dotNetOk = IsDotNetDesktopRuntimeInstalled();
     const bool appRuntimeOk = IsWindowsAppRuntimeInstalled(dataDirectory);
 
@@ -475,6 +507,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             return 1;
         }
     }
+#endif
 
     const auto launchResult = reinterpret_cast<INT_PTR>(
         ShellExecuteW(nullptr, L"open", mainProgram.c_str(), nullptr, dataDirectory.c_str(), SW_SHOWNORMAL));

@@ -31,7 +31,7 @@ public sealed partial class QuickSettingsPopup : Window
     private bool _isOperationInProgress;
     private AppWindow? _appWindow;
 
-    internal StackPanel CardsPanel = new() { Spacing = 14 };
+    internal StackPanel CardsPanel = new() { Spacing = 14, HorizontalAlignment = HorizontalAlignment.Stretch };
     private Border? _toastHost;
     private TextBlock? _toastText;
     private Button? _toastActionButton;
@@ -135,7 +135,16 @@ public sealed partial class QuickSettingsPopup : Window
         SetTitleBar(titleBar);
         root.Children.Add(titleBar);
 
-        _contentScroll = new ScrollViewer { Padding = new Thickness(24) };
+        _contentScroll = new ScrollViewer
+        {
+            Padding = new Thickness(24),
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            VerticalScrollMode = ScrollMode.Enabled,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollMode = ScrollMode.Disabled,
+            IsVerticalRailEnabled = true,
+            ZoomMode = ZoomMode.Disabled
+        };
         Grid.SetRow(_contentScroll, 1);
         _contentScroll.Content = CardsPanel;
         root.Children.Add(_contentScroll);
@@ -491,7 +500,8 @@ public sealed partial class QuickSettingsPopup : Window
         {
             Height = 48, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch,
             Background = InactiveBrush,
-            BorderThickness = new Thickness(1, 0, 0, 0),
+            // Keep the same outer 1 px border as the icon half; omit only the shared middle edge.
+            BorderThickness = new Thickness(0, 1, 1, 1),
             BorderBrush = ControlBorderBrush,
             CornerRadius = new CornerRadius(0, 8, 8, 0), Padding = new Thickness(0),
             Content = CreateChevronIcon()
@@ -817,7 +827,8 @@ public sealed partial class QuickSettingsPopup : Window
     public void ToggleVisibility()
     {
         var hwnd = WindowNative.GetWindowHandle(this);
-        if (PopupNativeMethods.IsWindowVisible(hwnd) && !PopupNativeMethods.IsIconic(hwnd))
+        if (PopupNativeMethods.IsWindowVisible(hwnd) && !PopupNativeMethods.IsIconic(hwnd) &&
+            PopupNativeMethods.GetForegroundWindow() == hwnd)
         {
             PopupNativeMethods.ShowWindow(hwnd, PopupNativeMethods.SW_MINIMIZE);
             return;
@@ -1039,13 +1050,13 @@ public sealed partial class QuickSettingsPopup : Window
     {
         var points = new PointCollection
         {
-            new Windows.Foundation.Point(1, 2),
-            new Windows.Foundation.Point(7, 8),
-            new Windows.Foundation.Point(13, 2)
+            new Windows.Foundation.Point(4, 1),
+            new Windows.Foundation.Point(9, 5),
+            new Windows.Foundation.Point(4, 9)
         };
         return new Polyline
         {
-            Points = points, Width = 14, Height = 10,
+            Points = points, Width = 12, Height = 10,
             Stroke = new SolidColorBrush(Colors.White), StrokeThickness = 1.2,
             StrokeLineJoin = PenLineJoin.Round, Stretch = Stretch.None,
             HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
@@ -1274,9 +1285,17 @@ public sealed partial class QuickSettingsPopup : Window
             connectedRow.Children.Add(disconnect);
             panel.Children.Add(connectedRow);
         }
-        panel.Children.Add(new TextBlock { Text = isZh ? "可用网络" : "Available networks", FontSize = 11, Opacity = 0.7, Margin = new Thickness(0, 4, 0, 0) });
+        var availablePanel = new StackPanel { Spacing = 6 };
+        var availableExpander = new Expander
+        {
+            Header = isZh ? "可用网络" : "Available networks",
+            IsExpanded = true,
+            Margin = new Thickness(0, 4, 0, 0),
+            Content = availablePanel
+        };
+        panel.Children.Add(availableExpander);
         var networks = await NetworkService.GetAvailableWifiNetworksAsync();
-        if (networks.Count == 0) panel.Children.Add(new TextBlock { Text = isZh ? "未发现网络" : "No networks found", FontSize = 11, Opacity = 0.7 });
+        if (networks.Count == 0) availablePanel.Children.Add(new TextBlock { Text = isZh ? "未发现网络" : "No networks found", FontSize = 11, Opacity = 0.7 });
         foreach (var network in networks.Take(8))
         {
             var row = new Grid { ColumnSpacing = 6 };
@@ -1296,10 +1315,18 @@ public sealed partial class QuickSettingsPopup : Window
             };
             Grid.SetColumn(connect, 1);
             row.Children.Add(connect);
-            panel.Children.Add(row);
+            availablePanel.Children.Add(row);
         }
 
-        panel.Children.Add(new TextBlock { Text = isZh ? "已保存 Wi-Fi" : "Saved Wi-Fi", FontSize = 11, Opacity = 0.7, Margin = new Thickness(0, 8, 0, 0) });
+        var savedContent = new StackPanel { Spacing = 6 };
+        var savedExpander = new Expander
+        {
+            Header = isZh ? "已保存 Wi-Fi" : "Saved Wi-Fi",
+            IsExpanded = false,
+            Margin = new Thickness(0, 8, 0, 0),
+            Content = savedContent
+        };
+        panel.Children.Add(savedExpander);
         _savedWifiSearchBox = new TextBox
         {
             PlaceholderText = isZh ? "搜索已保存 Wi-Fi" : "Search saved Wi-Fi",
@@ -1307,8 +1334,8 @@ public sealed partial class QuickSettingsPopup : Window
         };
         var savedPanel = new StackPanel { Spacing = 6 };
         _savedWifiSearchBox.TextChanged += (_, _) => RenderSavedWifiProfiles(savedPanel, isZh);
-        panel.Children.Add(_savedWifiSearchBox);
-        panel.Children.Add(savedPanel);
+        savedContent.Children.Add(_savedWifiSearchBox);
+        savedContent.Children.Add(savedPanel);
         await PopulateSavedWifiProfilesAsync(savedPanel, isZh);
     }
 
@@ -2425,6 +2452,8 @@ public sealed partial class QuickSettingsPopup : Window
         public static extern bool IsWindowVisible(IntPtr hWnd);
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         public static extern bool IsIconic(IntPtr hWnd);
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        public static extern IntPtr GetForegroundWindow();
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         public static extern bool BringWindowToTop(IntPtr hWnd);
         [System.Runtime.InteropServices.DllImport("user32.dll")]
