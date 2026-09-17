@@ -1,0 +1,75 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="WEQS-native" tests="23" failures="23" time="0">
+  <testsuite name="WEQS.native.regression" tests="23" failures="23">
+    <testcase classname="WEQS.launch" name="F01: 启动后创建主窗体">
+      <failure message="无法将“Assert-True”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正确，然后再试一次。"/>
+    </testcase>
+    <testcase classname="WEQS.launch" name="F02: 启动后主窗体自动可见(托盘弹出)">
+      <failure message="无法将“Assert-True”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正确，然后再试一次。"/>
+    </testcase>
+    <testcase classname="WEQS.launch" name="F03: 单实例: 二次启动激活现有实例且自身退出">
+      <failure message="无法将“Assert-True”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正确，然后再试一次。"/>
+    </testcase>
+    <testcase classname="WEQS.home" name="F04: 窗口宽度恒为 368px(物理像素)">
+      <failure message="无法将“Assert-True”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正确，然后再试一次。"/>
+    </testcase>
+    <testcase classname="WEQS.home" name="F05: 紧凑高度 570 / 详情高度 660">
+      <failure message="无法将“Assert-True”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正确，然后再试一次。"/>
+    </testcase>
+    <testcase classname="WEQS.home" name="F06: 窗口定位在工作区内且贴近视觉任务栏角">
+      <failure message="无法将“Assert-True”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正确，然后再试一次。"/>
+    </testcase>
+    <testcase classname="WEQS.details" name="F07: 以太网右半区进入网络优先级详情(660)">
+      <failure message="无法将“Assert-True”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正确，然后再试一次。"/>
+    </testcase>
+    <testcase classname="WEQS.details" name="F08: 显示卡右半区进入屏幕管理详情(含复制/扩展/HDR/虚拟屏)">
+      <failure message="无法将“Assert-True”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正确，然后再试一次。"/>
+    </testcase>
+    <testcase classname="WEQS.details" name="F09: 蓝牙右半区进入蓝牙详情; 扫描按钮完成一次扫描">
+      <failure message="无法将“Assert-True”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正确，然后再试一次。"/>
+    </testcase>
+    <testcase classname="WEQS.details" name="F10: USB 右半区进入 USB 共享详情">
+      <failure message="无法将“Assert-True”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正确，然后再试一次。"/>
+    </testcase>
+    <testcase classname="WEQS.settings" name="F11: 底部齿轮进入设置页(650)">
+      <failure message="无法将“Assert-True”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正确，然后再试一次。"/>
+    </testcase>
+    <testcase classname="WEQS.settings" name="F12: 设置页: 跳转网络优先级详情">
+      <failure message="无法将“Assert-True”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正确，然后再试一次。"/>
+    </testcase>
+    <testcase classname="WEQS.settings" name="F13: 开机自启动: 读取注册表当前值与界面一致">
+      <failure message="无法将“Assert-True”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正确，然后再试一次。"/>
+    </testcase>
+    <testcase classname="WEQS.doh" name="F14: 当前网络卡 DoH 摘要行进入 DoH 页(650)">
+      <failure message="无法将“Assert-True”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正确，然后再试一次。"/>
+    </testcase>
+    <testcase classname="WEQS.doh" name="F15: 首选 DoH 选择器: 打开/筛选/Esc 关闭">
+      <failure message="在此对象上找不到属性“Shot”。请确认该属性存在并且可设置。"/>
+    </testcase>
+    <testcase classname="WEQS.doh" name="F16: DoH 搜索框: 弹出 Prompt 对话框后取消">
+      <failure message="方法调用失败，因为 [T] 不包含名为“FindWindowW”的方法。"/>
+    </testcase>
+    <testcase classname="WEQS.language" name="F17: 切换 English 后界面文案变化并写入 HKCU; 恢复中文">
+      <failure message="在此对象上找不到属性“Shot”。请确认该属性存在并且可设置。"/>
+    </testcase>
+    <testcase classname="WEQS.hide" name="F18: Esc 键隐藏窗口">
+      <failure message="无法将“Assert-True”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正确，然后再试一次。"/>
+    </testcase>
+    <testcase classname="WEQS.reactivate" name="F19: 再次启动进程令现有实例重新弹出窗口">
+      <failure message="无法将“Assert-True”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正确，然后再试一次。"/>
+    </testcase>
+    <testcase classname="WEQS.reactivate" name="F20: 切换页后的 3 秒刷新周期不崩溃(等待 2 个周期)">
+      <failure message="无法将“Assert-True”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正确，然后再试一次。"/>
+    </testcase>
+    <testcase classname="WEQS.visual" name="U01: 主页快捷卡配色: 启用卡为蓝色主题色(0,103,192)">
+      <failure message="在此对象上找不到属性“Shot”。请确认该属性存在并且可设置。"/>
+    </testcase>
+    <testcase classname="WEQS.exit" name="F21: 托盘退出: WM_COMMAND kTrayExit(1003) 正常退出">
+      <failure message="无法将“Assert-True”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正确，然后再试一次。"/>
+    </testcase>
+    <testcase classname="WEQS.exit" name="F22: 退出后托盘图标与互斥体清理(窗口销毁)">
+      <failure message="无法将“Assert-True”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。请检查名称的拼写，如果包括路径，请确保路径正确，然后再试一次。"/>
+    </testcase>
+  </testsuite>
+</testsuites>
+
