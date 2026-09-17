@@ -84,9 +84,9 @@ public static class DisplayService
                 enabled |= (info.Value & 2) != 0;
             }
         }
-        LastModeWasExtend = extended;
         return (paths.Length, supported, enabled, extended);
     }
+
 
     public static bool SetHdr(bool enabled)
     {

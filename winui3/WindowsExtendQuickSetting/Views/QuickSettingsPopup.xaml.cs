@@ -1295,11 +1295,12 @@ public sealed partial class QuickSettingsPopup : Window
         action.Click += async (_, _) =>
         {
             action.IsEnabled = false;
-            var success = device.IsPaired
+            var wasPaired = device.IsPaired;
+            var success = wasPaired
                 ? await BluetoothService.UnpairAsync(device)
                 : await BluetoothService.PairAsync(device);
             ShowToast(success
-                ? (device.IsPaired ? (isZh ? "蓝牙设备已移除" : "Bluetooth device removed") : (isZh ? "蓝牙设备已配对" : "Bluetooth device paired"))
+                ? (wasPaired ? (isZh ? "蓝牙设备已移除" : "Bluetooth device removed") : (isZh ? "蓝牙设备已配对" : "Bluetooth device paired"))
                 : (isZh ? "蓝牙设备操作失败" : "Bluetooth device operation failed"));
             await PopulateBluetoothDevicesAsync();
         };
@@ -1681,9 +1682,13 @@ public sealed partial class QuickSettingsPopup : Window
             disconnect.Click += async (_, _) =>
             {
                 disconnect.IsEnabled = false;
-                var success = await NetworkService.DisconnectWifiAsync(adapter.InterfaceName);
-                ShowToast(success ? (isZh ? "Wi-Fi 已断开连接" : "Wi-Fi disconnected") : (isZh ? "断开失败" : "Disconnect failed"));
-                _networkService.RefreshAdapters();
+                try
+                {
+                    var success = await NetworkService.DisconnectWifiAsync(adapter.InterfaceName);
+                    ShowToast(success ? (isZh ? "Wi-Fi 已断开连接" : "Wi-Fi disconnected") : (isZh ? "断开失败" : "Disconnect failed"));
+                    _networkService.RefreshAdapters();
+                }
+                finally { disconnect.IsEnabled = true; }
             };
             connectedRow.Children.Add(disconnect);
             panel.Children.Add(connectedRow);

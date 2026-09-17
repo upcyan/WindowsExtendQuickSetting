@@ -9,6 +9,7 @@ namespace WindowsEthernetControl.Views;
 public sealed partial class SettingsWindow : Window
 {
     private readonly Services.SettingsService _settings = App.Settings;
+    private bool _initializing = true;
 
     public SettingsWindow()
     {
@@ -36,15 +37,18 @@ public sealed partial class SettingsWindow : Window
         LangCombo.SelectedIndex = _settings.Settings.Language == "zh-CN" ? 0 : 1;
         var version = typeof(App).Assembly.GetName().Version;
         VersionText.Text = version == null ? "WindowsExtendQuickSetting" : $"WindowsExtendQuickSetting {version.Major}.{version.Minor}.{version.Build}";
+        _initializing = false;
     }
 
     private void StartToggle_Toggled(object sender, RoutedEventArgs e)
     {
+        if (_initializing) return;
         _settings.SetStartWithWindows(StartToggle.IsOn);
     }
 
     private void LangCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_initializing) return;
         _settings.Settings.Language = LangCombo.SelectedIndex == 0 ? "zh-CN" : "en-US";
         _settings.Save();
     }

@@ -60,7 +60,7 @@ public class SettingsService
 
         try
         {
-            var key = Registry.CurrentUser.OpenSubKey(
+            using var key = Registry.CurrentUser.OpenSubKey(
                 @"Software\Microsoft\Windows\CurrentVersion\Run", true);
             if (key != null)
             {
@@ -73,7 +73,6 @@ public class SettingsService
                 {
                     key.DeleteValue("WindowsExtendQuickSetting", false);
                 }
-                key.Close();
             }
         }
         catch { }
