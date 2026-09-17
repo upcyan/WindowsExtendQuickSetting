@@ -97,6 +97,7 @@ enum class Page { Home, Settings, Doh };
 Page g_page = Page::Home;
 bool g_startWithWindows = false;
 bool g_isZh = true;
+bool g_backdropMica = false;
 int g_hoverTile = 0;
 bool g_hoverTileExpand = false;
 BYTE g_windowAlpha = 255;
@@ -711,13 +712,40 @@ bool SetLanguage(bool isZh) {
     return success;
 }
 
-bool ApplyWindowChrome() {
+bool ApplyBackdrop() {
     if (!g_window) return false;
+    const int backdropType = g_backdropMica ? 2 : 3;
     const int roundedCorners = 2; // DWMWCP_ROUND
-    const int noBorder = static_cast<int>(0xFFFFFFFE); // DWMWA_COLOR_NONE
+    const auto result = DwmSetWindowAttribute(g_window, 38, &backdropType, sizeof(backdropType));
     DwmSetWindowAttribute(g_window, 33, &roundedCorners, sizeof(roundedCorners)); // DWMWA_WINDOW_CORNER_PREFERENCE
-    DwmSetWindowAttribute(g_window, 34, &noBorder, sizeof(noBorder)); // DWMWA_BORDER_COLOR
-    return true;
+    InvalidateRect(g_window, nullptr, TRUE);
+    return SUCCEEDED(result);
+}
+
+void RefreshBackdrop() {
+    HKEY key{};
+    wchar_t value[16]{};
+    DWORD type{}, size = sizeof(value);
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\WindowsExtendQuickSetting.Native", 0, KEY_READ, &key) == ERROR_SUCCESS) {
+        if (RegQueryValueExW(key, L"BackdropEffect", nullptr, &type, reinterpret_cast<BYTE*>(value), &size) == ERROR_SUCCESS && type == REG_SZ)
+            g_backdropMica = _wcsicmp(value, L"Mica") == 0;
+        RegCloseKey(key);
+    }
+}
+
+bool SetBackdrop(bool mica) {
+    HKEY key{};
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\WindowsExtendQuickSetting.Native", 0, nullptr, 0,
+        KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS) return false;
+    const std::wstring value = mica ? L"Mica" : L"Acrylic";
+    const bool saved = RegSetValueExW(key, L"BackdropEffect", 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()),
+        static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t))) == ERROR_SUCCESS;
+    RegCloseKey(key);
+    if (!saved) return false;
+    g_backdropMica = mica;
+    const bool applied = ApplyBackdrop();
+    ShowToast(mica ? Tr(L"已切换为云母背景", L"Backdrop changed to Mica") : Tr(L"已切换为亚克力背景", L"Backdrop changed to Acrylic"));
+    return applied;
 }
 
 bool LooksLikeUsbTethering(const IP_ADAPTER_ADDRESSES* address) {
@@ -1510,7 +1538,7 @@ void PaintWindow(HWND hwnd) {
     auto dc = BeginPaint(hwnd, &ps);
     RECT client{};
     GetClientRect(hwnd, &client);
-    auto background = CreateSolidBrush(RGB(233, 239, 245));
+    auto background = CreateSolidBrush(g_backdropMica ? RGB(243, 243, 243) : RGB(238, 244, 248));
     FillRect(dc, &client, background);
     DeleteObject(background);
 
@@ -1520,7 +1548,7 @@ void PaintWindow(HWND hwnd) {
         const auto drawSettingsCard = [&](int top, const wchar_t* glyph, const wchar_t* title,
                                           const wchar_t* description, const std::wstring& value) {
             const RECT card{24, top, 344, top + 72};
-            FillRoundRect(dc, card, RGB(255, 255, 255), 8);
+            FillRoundRect(dc, card, RGB(250, 252, 253), 8);
             DrawGlyph(dc, glyph, 38, top + 20, 30, 30, RGB(55, 55, 55), 17);
             DrawText(dc, title, 78, top + 12, 150, 25, RGB(30, 30, 30), 13, true);
             DrawText(dc, description, 78, top + 36, 170, 22, RGB(105, 105, 105), 11);
@@ -1532,13 +1560,16 @@ void PaintWindow(HWND hwnd) {
             g_startWithWindows ? Tr(L"已开启", L"On") : Tr(L"已关闭", L"Off"));
         drawSettingsCard(146, L"\xE8C1", Tr(L"语言", L"Language"),
             Tr(L"界面显示语言", L"Display language"), g_isZh ? L"中文  \xE70D" : L"English  \xE70D");
-        drawSettingsCard(230, L"\xE839", Tr(L"上网方式优先级", L"Connection priority"),
+        drawSettingsCard(230, L"\xE790", Tr(L"背景特效", L"Backdrop effect"),
+            Tr(L"选择亚克力或云母材质", L"Choose Acrylic or Mica material"),
+            g_backdropMica ? Tr(L"云母  \xE70D", L"Mica  \xE70D") : Tr(L"亚克力  \xE70D", L"Acrylic  \xE70D"));
+        drawSettingsCard(314, L"\xE839", Tr(L"上网方式优先级", L"Connection priority"),
             Tr(L"调整以太网、Wi-Fi、USB 共享的优先级", L"Set Ethernet, Wi-Fi and USB tether priority"),
             Tr(L"管理", L"Manage"));
-        drawSettingsCard(314, L"\xE946", Tr(L"关于", L"About"),
+        drawSettingsCard(398, L"\xE946", Tr(L"关于", L"About"),
             (std::wstring(L"WindowsExtendQuickSetting Native v") + GetNativeVersion()).c_str(), L"");
         DrawText(dc, Tr(L"网络与蓝牙快速控制", L"Quick network and Bluetooth controls"),
-            78, 363, 240, 22, RGB(105, 105, 105), 11);
+            78, 449, 240, 22, RGB(105, 105, 105), 11);
         // WinUI3 keeps navigation in the footer; use the same stable location
         // for returning instead of a separate top-left back affordance.
         DrawGlyph(dc, L"\xE72B", 308, 608, 32, 28, RGB(50, 50, 50), 17);
@@ -1550,7 +1581,7 @@ void PaintWindow(HWND hwnd) {
         DrawText(dc, Tr(L"DoH 设置", L"DoH settings"), 58, 18, 250, 30, RGB(25, 25, 25), 20, true);
         const auto primary = g_dohServers.empty() ? Tr(L"未选择", L"None") : g_dohServers[std::min(g_dohPrimary, g_dohServers.size() - 1)].address.c_str();
         const auto backup = g_dohServers.size() < 2 ? Tr(L"未选择", L"None") : g_dohServers[std::min(g_dohBackup, g_dohServers.size() - 1)].address.c_str();
-        FillRoundRect(dc, RECT{24, 62, 344, 166}, RGB(255, 255, 255), 10);
+        FillRoundRect(dc, RECT{24, 62, 344, 166}, RGB(250, 252, 253), 10);
         DrawGlyph(dc, L"\xE774", 38, 78, 30, 30, RGB(55, 55, 55), 17);
         DrawText(dc, Tr(L"全局 DoH", L"Global DoH"), 78, 72, 160, 25, RGB(30, 30, 30), 13, true);
         DrawText(dc, g_dohEnabled ? Tr(L"已启用，点击切换", L"Enabled, click to toggle") : Tr(L"已关闭，点击切换", L"Off, click to toggle"), 78, 96, 180, 22, RGB(105, 105, 105), 11);
@@ -1559,7 +1590,7 @@ void PaintWindow(HWND hwnd) {
         DrawActionButton(dc, RECT{40, 120, 180, 151}, std::wstring(Tr(L"首选：", L"Primary: ")) + primary);
         DrawActionButton(dc, RECT{188, 120, 328, 151}, std::wstring(Tr(L"备用：", L"Backup: ")) + backup);
 
-        FillRoundRect(dc, RECT{24, 178, 344, 612}, RGB(255, 255, 255), 10);
+        FillRoundRect(dc, RECT{24, 178, 344, 612}, RGB(250, 252, 253), 10);
         DrawText(dc, Tr(L"DoH 服务器（DNS over HTTPS）", L"DoH servers (DNS over HTTPS)"), 40, 192, 250, 24, RGB(30, 30, 30), 13, true);
         DrawActionButton(dc, RECT{40, 218, 112, 248}, Tr(L"快速导入", L"Import"));
         DrawActionButton(dc, RECT{118, 218, 194, 248}, Tr(L"手动添加", L"Add"));
@@ -1612,11 +1643,11 @@ void PaintWindow(HWND hwnd) {
     const auto usbCaption = std::wstring(Tr(L"USB 共享 · ", L"USB tether · ")) + (g_usbOn ? Tr(L"已连接", L"Connected") : Tr(L"未连接", L"Disconnected"));
     const auto displayCaption = std::wstring(Tr(L"屏幕 · ", L"Display · ")) +
         (g_activeDisplayCount > 1 ? (g_displayExtended ? Tr(L"扩展", L"Extend") : Tr(L"复制", L"Duplicate")) : Tr(L"单屏", L"Single"));
-    DrawTile(dc, RECT{24, 24, 123, 71}, L"\xE839", ethernetCaption.c_str(), g_ethernetOn, g_hoverTile == 1 && !g_hoverTileExpand, g_hoverTile == 1 && g_hoverTileExpand,
+    DrawTile(dc, RECT{24, 34, 123, 81}, L"\xE839", ethernetCaption.c_str(), g_ethernetOn, g_hoverTile == 1 && !g_hoverTileExpand, g_hoverTile == 1 && g_hoverTileExpand,
         g_detailsVisible && g_detailsKind == 3);
-    DrawTile(dc, RECT{135, 24, 234, 71}, L"\xE701", wifiCaption.c_str(), g_wifiOn, g_hoverTile == 2 && !g_hoverTileExpand, g_hoverTile == 2 && g_hoverTileExpand,
+    DrawTile(dc, RECT{135, 34, 234, 81}, L"\xE701", wifiCaption.c_str(), g_wifiOn, g_hoverTile == 2 && !g_hoverTileExpand, g_hoverTile == 2 && g_hoverTileExpand,
         g_detailsVisible && g_detailsKind == 1);
-    DrawTile(dc, RECT{245, 24, 344, 71}, L"\xE702", bluetoothCaption.c_str(), g_bluetoothOn, g_hoverTile == 3 && !g_hoverTileExpand, g_hoverTile == 3 && g_hoverTileExpand,
+    DrawTile(dc, RECT{245, 34, 344, 81}, L"\xE702", bluetoothCaption.c_str(), g_bluetoothOn, g_hoverTile == 3 && !g_hoverTileExpand, g_hoverTile == 3 && g_hoverTileExpand,
         g_detailsVisible && g_detailsKind == 2);
     DrawTile(dc, RECT{24, 114, 123, 161}, L"\xE88E", usbCaption.c_str(), g_usbOn, g_hoverTile == 4 && !g_hoverTileExpand, g_hoverTile == 4 && g_hoverTileExpand,
         g_detailsVisible && g_detailsKind == 4);
@@ -1642,8 +1673,9 @@ void PaintWindow(HWND hwnd) {
             : std::wstring(Tr(L"DoH：已关闭", L"DoH: disabled"));
         DrawText(dc, g_currentIpInfo, 40, networkTop + 66, 270, 18, RGB(100, 100, 100), 10);
         DrawText(dc, g_currentDnsInfo, 40, networkTop + 84, 270, 18, RGB(100, 100, 100), 10);
-                DrawText(dc, dohSummary, 40, networkTop + 102, 250, 18,
-                    g_dohEnabled ? RGB(0, 103, 192) : RGB(100, 100, 100), 11);
+        DrawText(dc, dohSummary, 40, networkTop + 102, 250, 18,
+            g_dohEnabled ? RGB(0, 103, 192) : RGB(100, 100, 100), 11);
+        DrawGlyph(dc, L"\xE713", 306, networkTop + 92, 24, 24, RGB(80, 80, 80), 12);
     } else {
         const auto compactInfo = g_currentNetworkInfo + (g_dohEnabled
             ? (g_dohServers.empty() ? std::wstring(Tr(L" · DoH 已启用", L" · DoH enabled")) : std::wstring(g_dohApplied ? Tr(L" · DoH 已应用 ", L" · DoH applied ") : L" · DoH ") + g_dohServers[std::min(g_dohPrimary, g_dohServers.size() - 1)].address)
@@ -1799,15 +1831,9 @@ void PaintWindow(HWND hwnd) {
 }
 
 void ToggleWindow() {
-    // NOTIFYICON_VERSION_4 delivers both WM_LBUTTONUP and NIN_SELECT for one
-    // click; without this guard the second call re-hides the just-shown popup.
-    static DWORD lastToggleTick = 0;
-    const DWORD now = GetTickCount();
-    if (lastToggleTick != 0 && now - lastToggleTick < 400) return;
-    lastToggleTick = now;
-    // Pure toggle: a visible popup minimizes, a hidden/minimized one returns.
-    // Focus-based checks misfire because the tray click moves focus first.
-    if (IsWindowVisible(g_window)) {
+    // A tray click only hides an already foreground popup. A visible popup
+    // behind another app is brought back to the foreground instead.
+    if (IsWindowVisible(g_window) && GetForegroundWindow() == g_window) {
         if (!g_fadeHiding) {
             g_fadeHiding = true;
             KillTimer(g_window, kResizeTimer);
@@ -1930,6 +1956,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
                 SetLayeredWindowAttributes(hwnd, 0, g_windowAlpha, LWA_ALPHA);
                 if (g_windowAlpha == 255) {
                     KillTimer(hwnd, kFadeTimer);
+                    ApplyBackdrop();
                 }
             }
         } else if (wparam == kResizeTimer) {
@@ -1957,7 +1984,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
         return 0;
     case WM_MOUSEMOVE: {
         const int x = GET_X_LPARAM(lparam), y = GET_Y_LPARAM(lparam);
-        const int hover = y >= 24 && y <= 71 ? (x <= 123 ? 1 : x <= 234 ? 2 : x <= 344 ? 3 : 0) :
+        const int hover = y >= 34 && y <= 81 ? (x <= 123 ? 1 : x <= 234 ? 2 : x <= 344 ? 3 : 0) :
             (x >= 24 && x <= 123 && y >= 114 && y <= 161 ? 4 : x >= 135 && x <= 234 && y >= 114 && y <= 161 ? 5 : 0);
         const bool hoverExpand = hover == 1 ? x >= 74 : hover == 2 ? x >= 184 : hover == 3 ? x >= 294 : hover == 4 ? x >= 74 : hover == 5 ? x >= 184 : false;
         const int networkTop = CurrentNetworkTop();
@@ -1993,7 +2020,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
             if (x >= 292 && y >= 594) g_page = Page::Home;
             else if (y >= 62 && y <= 134) SetStartWithWindows(!g_startWithWindows);
             else if (y >= 146 && y <= 218) SetLanguage(!g_isZh);
-            else if (y >= 230 && y <= 302) {
+            else if (y >= 230 && y <= 302) SetBackdrop(!g_backdropMica);
+            else if (y >= 314 && y <= 386) {
                 g_page = Page::Home;
                 g_detailsVisible = true;
                 g_detailsKind = 3;
@@ -2053,7 +2081,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
             InvalidateRect(hwnd, nullptr, TRUE);
             return 0;
         }
-        if (y >= 24 && y <= 71) {
+        if (y >= 34 && y <= 81) {
             if (x >= 24 && x <= 123) {
                 if (x < 74) { const bool target = !g_ethernetOn; if (!SetEthernetEnabled(target)) g_status = Tr(L"以太网 · 操作失败", L"Ethernet · Operation failed"); else g_status = target ? Tr(L"以太网 · 正在启用", L"Ethernet · Enabling") : Tr(L"以太网 · 正在禁用", L"Ethernet · Disabling"); RefreshNetworkAdapters(); }
                 else { g_detailsVisible = !g_detailsVisible || g_detailsKind != 3; g_detailsKind = 3; RefreshNetworkAdapters(); }
@@ -2189,8 +2217,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
             }
         } else {
             const int networkTop = CurrentNetworkTop();
-            if (g_currentNetworkExpanded && y >= networkTop + 96 && y <= networkTop + 122 && x >= 24) {
-                // The DoH summary line itself opens the DoH settings page.
+            if (g_currentNetworkExpanded && y >= networkTop + 82 && y <= networkTop + 126 && x >= 280) {
                 g_page = Page::Doh;
                 RefreshDohServers();
             } else if (x >= 294 && x <= 326 && y >= networkTop + 11 && y <= networkTop + 39) {
@@ -2293,9 +2320,9 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(1));
     RegisterClassW(&wc);
 
-    g_window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_LAYERED, kClassName, kTitle, WS_POPUP,
+    g_window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_LAYERED, kClassName, kTitle, WS_POPUP | WS_BORDER,
         0, 0, kWindowWidth, kPageHeight, nullptr, nullptr, instance, nullptr);
-    ApplyWindowChrome();
+    ApplyBackdrop();
 
     g_tray.cbSize = sizeof(g_tray);
     g_tray.hWnd = g_window;
@@ -2310,6 +2337,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     g_tray.uVersion = NOTIFYICON_VERSION_4;
     Shell_NotifyIconW(NIM_SETVERSION, &g_tray);
     RefreshLanguage();
+    RefreshBackdrop();
     RefreshWifiStatus();
     RefreshBluetoothAdapters();
     RefreshBluetoothDevices();
@@ -2319,7 +2347,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     RefreshUsbTethering();
     RefreshNetworkAdapters();
     RefreshDisplayState();
-    ApplyWindowChrome();
+    ApplyBackdrop();
     SetTimer(g_window, kActivateTimer, 120, nullptr);
     ToggleWindow();
 

@@ -105,6 +105,7 @@ public sealed partial class QuickSettingsPopup : Window
     private bool _showingDohSettings;
     private int _pageChangeVersion;
     private CancellationTokenSource? _windowAnimationCts;
+    private long _lastDeactivatedTicks;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _displayRefreshTimer;
     private Button? _displayDuplicateButton;
     private Button? _displayExtendButton;
@@ -148,9 +149,7 @@ public sealed partial class QuickSettingsPopup : Window
 
         _contentScroll = new ScrollViewer
         {
-            // 8 px title bar + 16 px top padding keeps the visible top gap equal
-            // to the 24 px left/right margins.
-            Padding = new Thickness(24, 16, 24, 24),
+            Padding = new Thickness(24),
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             VerticalScrollMode = ScrollMode.Enabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Hidden,
@@ -275,9 +274,6 @@ public sealed partial class QuickSettingsPopup : Window
                 presenter.SetBorderAndTitleBar(false, false);
                 presenter.IsResizable = false;
                 presenter.IsMaximizable = false;
-                // SW_MINIMIZE from the tray toggle is only honored when the
-                // presenter allows minimizing.
-                presenter.IsMinimizable = true;
                 presenter.IsMinimizable = false;
             }
         }
@@ -312,6 +308,11 @@ public sealed partial class QuickSettingsPopup : Window
     {
         if (_backdropConfiguration != null)
             _backdropConfiguration.IsInputActive = args.WindowActivationState != WindowActivationState.Deactivated;
+        // Clicking the taskbar/tray icon deactivates the window before the toggle
+        // arrives, so record when it lost focus to still treat that click as "hide".
+        _lastDeactivatedTicks = args.WindowActivationState == WindowActivationState.Deactivated
+            ? Environment.TickCount64
+            : 0;
     }
 
     private void OnClosed(object sender, WindowEventArgs args)
@@ -466,16 +467,6 @@ public sealed partial class QuickSettingsPopup : Window
         _networkAddressText = new TextBlock { FontSize = 11, Opacity = 0.72, TextWrapping = TextWrapping.Wrap };
         _networkDnsText = new TextBlock { FontSize = 11, Opacity = 0.72, TextWrapping = TextWrapping.Wrap };
         _networkDohText = new TextBlock { FontSize = 11, Opacity = 0.78, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
-        // Tapping the DoH status line opens the DoH settings page (replaces the
-        // removed gear button, matching the native build).
-        _networkDohText.Tapped += (_, _) =>
-        {
-            _showingSettings = false;
-            _showingDohSettings = true;
-            ShowCurrentPage();
-        };
-        ToolTipService.SetToolTip(_networkDohText,
-            App.Settings.Settings.Language == "zh-CN" ? "点击打开 DoH 设置" : "Click to open DoH settings");
         networkInfo.Children.Add(_networkNameText);
         _networkDetailsPanel = new StackPanel { Spacing = 3, Visibility = _currentNetworkExpanded ? Visibility.Visible : Visibility.Collapsed };
         _networkDetailsPanel.Children.Add(_networkAddressText);
@@ -487,7 +478,24 @@ public sealed partial class QuickSettingsPopup : Window
         infoGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         infoGrid.Children.Add(networkInfo);
         var dohPanel = new StackPanel { Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
-        dohPanel.Children.Add(new TextBlock { Text = "DoH", FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
+        var dohHeader = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right };
+        dohHeader.Children.Add(new TextBlock { Text = "DoH", FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
+        var dohSettingsButton = new Button
+        {
+            Width = 24, Height = 24, Padding = new Thickness(0),
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Content = new FontIcon { Glyph = "\uE713", FontSize = 12 }
+        };
+        ToolTipService.SetToolTip(dohSettingsButton, isZh ? "DoH 设置" : "DoH settings");
+        dohSettingsButton.Click += (_, _) =>
+        {
+            _showingSettings = false;
+            _showingDohSettings = true;
+            ShowCurrentPage();
+        };
+        dohHeader.Children.Add(dohSettingsButton);
+        dohPanel.Children.Add(dohHeader);
         _dohToggle = new Button { Width = 42, Height = 22, Padding = new Thickness(3, 2, 3, 2), CornerRadius = new CornerRadius(11) };
         _dohToggle.Click += DohToggle_Click;
         dohPanel.Children.Add(_dohToggle);
@@ -965,13 +973,19 @@ public sealed partial class QuickSettingsPopup : Window
     public void ToggleVisibility()
     {
         var hwnd = WindowNative.GetWindowHandle(this);
-        // Pure toggle, matching the native version: focus-based checks misfire
-        // because the tray click moves focus before the toggle arrives.
-        if (PopupNativeMethods.IsWindowVisible(hwnd) && !PopupNativeMethods.IsIconic(hwnd))
+        var foreground = PopupNativeMethods.GetForegroundWindow() == hwnd;
+        // A toggle right after the window lost activation is a tray/taskbar click
+        // on an already-visible window, so hide it instead of showing it again.
+        var justDeactivated = _lastDeactivatedTicks > 0 &&
+            Environment.TickCount64 - _lastDeactivatedTicks < 700;
+        if (PopupNativeMethods.IsWindowVisible(hwnd) && !PopupNativeMethods.IsIconic(hwnd) &&
+            (foreground || justDeactivated))
         {
+            _lastDeactivatedTicks = 0;
             PopupNativeMethods.ShowWindow(hwnd, PopupNativeMethods.SW_MINIMIZE);
             return;
         }
+        _lastDeactivatedTicks = 0;
         ShowAndActivate();
     }
 

@@ -148,9 +148,7 @@ public sealed partial class QuickSettingsPopup : Window
 
         _contentScroll = new ScrollViewer
         {
-            // 8 px title bar + 16 px top padding keeps the visible top gap equal
-            // to the 24 px left/right margins.
-            Padding = new Thickness(24, 16, 24, 24),
+            Padding = new Thickness(24),
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             VerticalScrollMode = ScrollMode.Enabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Hidden,
@@ -254,10 +252,6 @@ public sealed partial class QuickSettingsPopup : Window
         var hwnd = WindowNative.GetWindowHandle(this);
         var borderColor = unchecked((int)0xFFFFFFFE);
         NativeMethods.DwmSetWindowAttribute(hwnd, 34, ref borderColor, sizeof(int));
-        // A fully transparent caption area removes the 1 px bright line DWM draws
-        // along the top edge when the title bar is extended into the client area.
-        var captionColor = 0x00FFFFFF;
-        NativeMethods.DwmSetWindowAttribute(hwnd, 35, ref captionColor, sizeof(int));
         var nonClientRenderingDisabled = 1;
         NativeMethods.DwmSetWindowAttribute(hwnd, 2, ref nonClientRenderingDisabled, sizeof(int));
         var style = NativeMethods.GetWindowLong(hwnd, -16);
@@ -275,9 +269,6 @@ public sealed partial class QuickSettingsPopup : Window
                 presenter.SetBorderAndTitleBar(false, false);
                 presenter.IsResizable = false;
                 presenter.IsMaximizable = false;
-                // SW_MINIMIZE from the tray toggle is only honored when the
-                // presenter allows minimizing.
-                presenter.IsMinimizable = true;
                 presenter.IsMinimizable = false;
             }
         }
@@ -466,16 +457,6 @@ public sealed partial class QuickSettingsPopup : Window
         _networkAddressText = new TextBlock { FontSize = 11, Opacity = 0.72, TextWrapping = TextWrapping.Wrap };
         _networkDnsText = new TextBlock { FontSize = 11, Opacity = 0.72, TextWrapping = TextWrapping.Wrap };
         _networkDohText = new TextBlock { FontSize = 11, Opacity = 0.78, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
-        // Tapping the DoH status line opens the DoH settings page (replaces the
-        // removed gear button, matching the native build).
-        _networkDohText.Tapped += (_, _) =>
-        {
-            _showingSettings = false;
-            _showingDohSettings = true;
-            ShowCurrentPage();
-        };
-        ToolTipService.SetToolTip(_networkDohText,
-            App.Settings.Settings.Language == "zh-CN" ? "点击打开 DoH 设置" : "Click to open DoH settings");
         networkInfo.Children.Add(_networkNameText);
         _networkDetailsPanel = new StackPanel { Spacing = 3, Visibility = _currentNetworkExpanded ? Visibility.Visible : Visibility.Collapsed };
         _networkDetailsPanel.Children.Add(_networkAddressText);
@@ -487,7 +468,24 @@ public sealed partial class QuickSettingsPopup : Window
         infoGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         infoGrid.Children.Add(networkInfo);
         var dohPanel = new StackPanel { Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
-        dohPanel.Children.Add(new TextBlock { Text = "DoH", FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
+        var dohHeader = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right };
+        dohHeader.Children.Add(new TextBlock { Text = "DoH", FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
+        var dohSettingsButton = new Button
+        {
+            Width = 24, Height = 24, Padding = new Thickness(0),
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Content = new FontIcon { Glyph = "\uE713", FontSize = 12 }
+        };
+        ToolTipService.SetToolTip(dohSettingsButton, isZh ? "DoH 设置" : "DoH settings");
+        dohSettingsButton.Click += (_, _) =>
+        {
+            _showingSettings = false;
+            _showingDohSettings = true;
+            ShowCurrentPage();
+        };
+        dohHeader.Children.Add(dohSettingsButton);
+        dohPanel.Children.Add(dohHeader);
         _dohToggle = new Button { Width = 42, Height = 22, Padding = new Thickness(3, 2, 3, 2), CornerRadius = new CornerRadius(11) };
         _dohToggle.Click += DohToggle_Click;
         dohPanel.Children.Add(_dohToggle);
@@ -561,10 +559,7 @@ public sealed partial class QuickSettingsPopup : Window
             Height = 48, HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch,
             Background = InactiveBrush,
             BorderBrush = ControlBorderBrush, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8, 0, 0, 8),
-            Padding = new Thickness(0), Content = new FontIcon { Glyph = glyph, FontSize = 17 },
-            // The popup focus lands on the first tile on launch; the system focus
-            // rect reads as a stray black ring around the icon.
-            UseSystemFocusVisuals = false
+            Padding = new Thickness(0), Content = new FontIcon { Glyph = glyph, FontSize = 17 }
         };
         expandButton = new Button
         {
@@ -574,8 +569,7 @@ public sealed partial class QuickSettingsPopup : Window
             BorderThickness = new Thickness(0, 1, 1, 1),
             BorderBrush = ControlBorderBrush,
             CornerRadius = new CornerRadius(0, 8, 8, 0), Padding = new Thickness(0),
-            Content = CreateChevronIcon(),
-            UseSystemFocusVisuals = false
+            Content = CreateChevronIcon()
         };
         ConfigureTileHover(mainButton);
         ConfigureTileHover(expandButton);
@@ -965,9 +959,8 @@ public sealed partial class QuickSettingsPopup : Window
     public void ToggleVisibility()
     {
         var hwnd = WindowNative.GetWindowHandle(this);
-        // Pure toggle, matching the native version: focus-based checks misfire
-        // because the tray click moves focus before the toggle arrives.
-        if (PopupNativeMethods.IsWindowVisible(hwnd) && !PopupNativeMethods.IsIconic(hwnd))
+        if (PopupNativeMethods.IsWindowVisible(hwnd) && !PopupNativeMethods.IsIconic(hwnd) &&
+            PopupNativeMethods.GetForegroundWindow() == hwnd)
         {
             PopupNativeMethods.ShowWindow(hwnd, PopupNativeMethods.SW_MINIMIZE);
             return;
@@ -2148,10 +2141,8 @@ public sealed partial class QuickSettingsPopup : Window
         _acrylicController.TintColor = dark
             ? Color.FromArgb(255, 32, 32, 32)
             : Color.FromArgb(255, 243, 243, 243);
-        // Keep the material closer to the shell's quick settings acrylic: the
-        // previous lower opacities let the desktop show through too strongly.
-        _acrylicController.TintOpacity = dark ? 0.62f : 0.55f;
-        _acrylicController.LuminosityOpacity = dark ? 0.72f : 0.78f;
+        _acrylicController.TintOpacity = dark ? 0.54f : 0.38f;
+        _acrylicController.LuminosityOpacity = dark ? 0.46f : 0.55f;
         _acrylicController.FallbackColor = dark
             ? Color.FromArgb(255, 32, 32, 32)
             : Color.FromArgb(255, 243, 243, 243);

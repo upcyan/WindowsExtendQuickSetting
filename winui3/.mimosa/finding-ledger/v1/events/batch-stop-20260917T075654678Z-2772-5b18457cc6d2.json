@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "mimosa-finding-ledger-batch/v1",
+  "batchId": "stop-20260917T075654678Z-2772-5b18457cc6d2",
+  "runId": "20260917T075654678Z-2772-5b18457cc6d2",
+  "runStatus": "completed",
+  "coverage": {
+    "status": "complete",
+    "reasons": []
+  },
+  "source": {
+    "component": "zcode-hook",
+    "operationId": "Stop"
+  },
+  "revision": "bdce902fcacd42b64e552fe2454f9162faebc855",
+  "diffHash": "b6fc4aaf09dba41d34baa32ea8abcaa06f00e98fd294eaaaf9de25efdfdad0f8",
+  "rulesVersion": "unavailable",
+  "sessionHash": "7a5194b79aa8c98c7eb1eb599a41ca97643a6c0d0eb4d0c5c439810fea8deef9",
+  "reportRef": ".mimosa/reports/task-review-sess_4e4bc568-0647-44ad-ad09-4689fcce8b50-20260917T075654678Z-2772-5b18457cc6d2.json",
+  "events": [],
+  "observedFindingIds": [],
+  "verifiedFiles": [
+    {
+      "file": "WindowsExtendQuickSetting/Views/QuickSettingsPopup.xaml.cs",
+      "direct": "complete",
+      "projectContext": "partial"
+    }
+  ],
+  "recordedAt": "2026-09-17T07:56:55.031Z"
+}

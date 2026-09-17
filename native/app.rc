@@ -1,4 +1,4 @@
-#include <windows.h>
+﻿#include <windows.h>
 1 ICON "app.ico"
 1 RT_MANIFEST "app.manifest"
 
@@ -26,9 +26,6 @@ BEGIN
     VALUE "Translation", 0x0409, 1200
   END
 END
-
-
-
 
 
 
