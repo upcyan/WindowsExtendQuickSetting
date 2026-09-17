@@ -1,4 +1,4 @@
-﻿using Microsoft.UI;
+using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Composition;
 using Microsoft.UI.Composition.SystemBackdrops;
@@ -1523,7 +1523,7 @@ public sealed partial class QuickSettingsPopup : Window
         });
         info.Children.Add(new TextBlock
         {
-            Text = adapter.GetDisplayInfo(),
+            Text = adapter.GetDisplayInfo(isZh ? "未分配" : "N/A"),
             FontSize = 10,
             Foreground = new SolidColorBrush(Color.FromArgb(255, 180, 180, 180)),
             TextWrapping = TextWrapping.Wrap

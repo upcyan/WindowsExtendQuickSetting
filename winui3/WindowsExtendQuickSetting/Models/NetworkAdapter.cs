@@ -32,16 +32,15 @@ public class NetworkAdapter
 
     public string SpeedText => Speed switch
     {
-        >= 10_000_000_000 => $"{Speed / 1_000_000_000} Gbps",
         >= 1_000_000_000 => $"{Speed / 1_000_000_000} Gbps",
         >= 1_000_000 => $"{Speed / 1_000_000} Mbps",
         >= 1_000 => $"{Speed / 1_000} Kbps",
         _ => $"{Speed} bps"
     };
 
-    public string GetDisplayInfo()
+    public string GetDisplayInfo(string fallbackIp = "N/A")
     {
-        var ip = IpAddresses.FirstOrDefault() ?? "未分配";
-        return $"IP: {ip} | 速度: {SpeedText}";
+        var ip = IpAddresses.FirstOrDefault() ?? fallbackIp;
+        return $"IP: {ip} | {SpeedText}";
     }
 }

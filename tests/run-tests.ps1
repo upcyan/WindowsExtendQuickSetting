@@ -72,13 +72,16 @@ Add-Type -AssemblyName System.Drawing
 $script:results = [System.Collections.Generic.List[object]]::new()
 $script:seq = 0
 $script:shotSeq = 0
+function Assert-True { param([bool]$Condition, [string]$Message)
+  if (-not $Condition) { throw "ASSERT FAILED: $Message" }
+}
 function New-Case { param($Id, $Group, $Title)
   $script:seq++
   [pscustomobject]@{ Seq=$script:seq; Id=$Id; Group=$Group; Title=$Title; Status='pass'; Note=''; Shot=''; Ms=0 }
 }
 function Invoke-Case { param($Case, [scriptblock]$Body)
   $sw = [System.Diagnostics.Stopwatch]::StartNew()
-  try { & $Body; if ($Case.Status -ne 'fail') { $Case.Status = 'pass' } }
+  try { & $Body $Case; if ($Case.Status -ne 'fail') { $Case.Status = 'pass' } }
   catch { $Case.Status = 'fail'; $Case.Note = ($_.Exception.Message -replace "\r?\n", ' | ') }
   $sw.Stop(); $Case.Ms = $sw.ElapsedMilliseconds
   $script:results.Add($Case)
@@ -382,7 +385,6 @@ Invoke-Case (New-Case 'F16' 'doh' 'DoH 搜索框: 弹出 Prompt 对话框后取�
   # 搜索按钮 (200..244, 218..248) -> PromptText 对话框 (class .Native.Prompt)
   Invoke-Click $hwnd 222 233
   $prompt = [T]::FindByClass('WindowsExtendQuickSetting.Native.Prompt')
-  $prompt = [T]::FindWindowW('WindowsExtendQuickSetting.Native.Prompt', $null)
   Assert-True ($prompt -ne [IntPtr]::Zero) 'prompt dialog not found'
   $c.Shot = Save-Shot $prompt 'doh-search-prompt'
   # 取消按钮 (284..360, 94..122) client coords
