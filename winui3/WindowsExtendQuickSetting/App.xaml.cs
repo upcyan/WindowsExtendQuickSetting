@@ -24,7 +24,9 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
-        if (!AcquireSingleInstance())
+        // WQS_SKIP_ELEVATE=1 runs a non-elevated, uncoordinated instance for testing.
+        var testMode = Environment.GetEnvironmentVariable("WQS_SKIP_ELEVATE") == "1";
+        if (!testMode && !AcquireSingleInstance())
         {
             Exit();
             return;
@@ -33,7 +35,7 @@ public partial class App : Application
         MainDispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
         IsElevated = ElevateHelper.CheckElevated();
 
-        if (!IsElevated)
+        if (!testMode && !IsElevated)
         {
             // The elevated replacement must be able to acquire the mutex immediately.
             // Keeping it until Exit() creates a race where the replacement sees this
@@ -50,6 +52,7 @@ public partial class App : Application
             return;
         }
 
+        if (testMode) InitializeInstanceCoordination();
         Settings.Load();
         Network.StartMonitoring();
 
@@ -154,10 +157,13 @@ public partial class App : Application
 
     private void InitializeInstanceCoordination()
     {
+        // Test mode (WQS_SKIP_ELEVATE=1) uses private event names so it never
+        // talks to a real instance.
+        var suffix = Environment.GetEnvironmentVariable("WQS_SKIP_ELEVATE") == "1" ? ".Test" : "";
         _activateExistingEvent = new EventWaitHandle(false, EventResetMode.AutoReset,
-            @"Local\WindowsExtendQuickSetting.Activate");
+            @"Local\WindowsExtendQuickSetting.Activate" + suffix);
         _shutdownForUpgradeEvent = new EventWaitHandle(false, EventResetMode.AutoReset,
-            @"Local\WindowsExtendQuickSetting.ShutdownForUpgrade");
+            @"Local\WindowsExtendQuickSetting.ShutdownForUpgrade" + suffix);
         try
         {
             var path = GetRunningVersionPath();

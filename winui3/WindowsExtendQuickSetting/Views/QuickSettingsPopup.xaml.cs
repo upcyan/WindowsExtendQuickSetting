@@ -31,7 +31,7 @@ public sealed partial class QuickSettingsPopup : Window
     private bool _isOperationInProgress;
     private AppWindow? _appWindow;
 
-    internal StackPanel CardsPanel = new() { Spacing = 14, HorizontalAlignment = HorizontalAlignment.Stretch };
+    internal StackPanel CardsPanel = new() { Spacing = 10, HorizontalAlignment = HorizontalAlignment.Stretch };
     private Border? _toastHost;
     private TextBlock? _toastText;
     private Button? _toastActionButton;
@@ -150,7 +150,7 @@ public sealed partial class QuickSettingsPopup : Window
         {
             // 8 px title bar + 16 px top padding keeps the visible top gap equal
             // to the 24 px left/right margins.
-            Padding = new Thickness(24, 16, 24, 24),
+            Padding = new Thickness(18, 10, 18, 18),
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             VerticalScrollMode = ScrollMode.Enabled,
             VerticalScrollBarVisibility = ScrollBarVisibility.Hidden,
@@ -245,6 +245,7 @@ public sealed partial class QuickSettingsPopup : Window
         {
             RefreshDisplayVisual();
             await RefreshBluetoothAsync();
+            await Task.Run(() => DisplayService.TryAutoEnsureVirtualDisplay());
         };
         _displayRefreshTimer.Start();
     }
@@ -267,6 +268,11 @@ public sealed partial class QuickSettingsPopup : Window
         var windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
         _appWindow = AppWindow.GetFromWindowId(windowId);
 
+        // WinAppSDK 1.6 regression (microsoft-ui-xaml#10091): windows are always
+        // treated as inactive, so XAML drops mouse wheel input entirely. A
+        // low-level mouse hook drives the scroll viewer directly instead.
+        InstallWheelHook();
+
         if (_appWindow != null)
         {
             _appWindow.IsShownInSwitchers = false;
@@ -283,6 +289,82 @@ public sealed partial class QuickSettingsPopup : Window
         }
     }
 
+    private IntPtr _wheelHook;
+    private WheelHookNative.WheelHookProc? _wheelHookProc;
+
+    private void InstallWheelHook()
+    {
+        if (_wheelHook != IntPtr.Zero) return;
+        _wheelHookProc = WheelHookCallback;
+        _wheelHook = WheelHookNative.SetWindowsHookExW(14 /* WH_MOUSE_LL */, _wheelHookProc, WheelHookNative.GetModuleHandleW(null), 0);
+    }
+
+    private void UninstallWheelHook()
+    {
+        if (_wheelHook != IntPtr.Zero)
+        {
+            WheelHookNative.UnhookWindowsHookEx(_wheelHook);
+            _wheelHook = IntPtr.Zero;
+        }
+        _wheelHookProc = null;
+    }
+
+    private IntPtr WheelHookCallback(int code, IntPtr wParam, IntPtr lParam)
+    {
+        const int WmMouseWheel = 0x020A;
+        try
+        {
+            if (code >= 0 && wParam.ToInt64() == WmMouseWheel)
+            {
+                var hook = System.Runtime.InteropServices.Marshal.PtrToStructure<WheelHookNative.MSLLHOOKSTRUCT>(lParam);
+                var hwnd = WindowNative.GetWindowHandle(this);
+                var visible = PopupNativeMethods.IsWindowVisible(hwnd);
+                var hasRect = PopupNativeMethods.GetWindowRect(hwnd, out var rect);
+                // Hook points are physical screen coordinates while GetWindowRect
+                // reports the window's logical (DPI-virtualized) rect.
+                var pt = new WheelHookNative.POINT { X = hook.Pt.X, Y = hook.Pt.Y };
+                WheelHookNative.PhysicalToLogicalPointForPerMonitorDPI(hwnd, ref pt);
+                var inside = hasRect && pt.X >= rect.Left && pt.X < rect.Right && pt.Y >= rect.Top && pt.Y < rect.Bottom;
+                var scrollable = _contentScroll?.ScrollableHeight ?? -1;
+                if (visible && inside && _contentScroll != null && scrollable > 0)
+                {
+                    var delta = (short)(hook.MouseData >> 16);
+                    var target = Math.Clamp(_contentScroll.VerticalOffset - delta / 2.5, 0, _contentScroll.ScrollableHeight);
+                    _contentScroll.ChangeView(null, target, null, true);
+                    return new IntPtr(1);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            try { System.IO.File.AppendAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "winuiwheel.log"), "hook ex: " + ex.Message + Environment.NewLine); } catch { }
+        }
+        return WheelHookNative.CallNextHookEx(_wheelHook, code, wParam, lParam);
+    }
+
+    private static class WheelHookNative
+    {
+        public delegate IntPtr WheelHookProc(int code, IntPtr wParam, IntPtr lParam);
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        public struct PT { public int X; public int Y; }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        public struct MSLLHOOKSTRUCT { public PT Pt; public uint MouseData; public uint Flags; public uint Time; public IntPtr ExtraInfo; }
+
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern IntPtr SetWindowsHookExW(int idHook, WheelHookProc proc, IntPtr hMod, uint threadId);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool UnhookWindowsHookEx(IntPtr hook);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern IntPtr GetModuleHandleW(string? name);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool PhysicalToLogicalPointForPerMonitorDPI(IntPtr hWnd, ref POINT point);
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        public struct POINT { public int X; public int Y; }
+    }
+
     public void PositionNearTray()
     {
         try
@@ -295,7 +377,7 @@ public sealed partial class QuickSettingsPopup : Window
             var workArea = monitorInfo.Work;
             var screen = monitorInfo.Monitor;
             var panelW = 367;
-            var panelH = _showingSettings || _showingDohSettings ? 650 : _adapterDetailsCard?.Visibility == Visibility.Visible ? 660 : 570;
+            var panelH = _showingSettings || _showingDohSettings ? 610 : _adapterDetailsCard?.Visibility == Visibility.Visible ? 620 : 520;
             var x = workArea.Right - panelW - 16;
             var y = workArea.Bottom - panelH - 8;
             if (workArea.Left > screen.Left) x = workArea.Left + 8;
@@ -316,6 +398,7 @@ public sealed partial class QuickSettingsPopup : Window
 
     private void OnClosed(object sender, WindowEventArgs args)
     {
+        UninstallWheelHook();
         _networkService.AdaptersChanged -= OnAdaptersChanged;
         _displayRefreshTimer?.Stop();
         _displayRefreshTimer = null;
@@ -377,7 +460,7 @@ public sealed partial class QuickSettingsPopup : Window
     private void BuildUI()
     {
         var isZh = App.Settings.Settings.Language == "zh-CN";
-        var quickGrid = new Grid { ColumnSpacing = 12, RowSpacing = 10 };
+        var quickGrid = new Grid { ColumnSpacing = 10, RowSpacing = 7 };
         for (var i = 0; i < 3; i++)
             quickGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         quickGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -486,8 +569,10 @@ public sealed partial class QuickSettingsPopup : Window
         infoGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         infoGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         infoGrid.Children.Add(networkInfo);
-        var dohPanel = new StackPanel { Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center };
-        dohPanel.Children.Add(new TextBlock { Text = "DoH", FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
+        // Horizontal, bottom-aligned so the toggle sits on the same line as the
+        // "DoH: ..." status text on the left.
+        var dohPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom };
+        dohPanel.Children.Add(new TextBlock { Text = "DoH", FontSize = 11, VerticalAlignment = VerticalAlignment.Center });
         _dohToggle = new Button { Width = 42, Height = 22, Padding = new Thickness(3, 2, 3, 2), CornerRadius = new CornerRadius(11) };
         _dohToggle.Click += DohToggle_Click;
         dohPanel.Children.Add(_dohToggle);
@@ -503,7 +588,7 @@ public sealed partial class QuickSettingsPopup : Window
             Background = (Brush)Application.Current.Resources["CardBackgroundFillColorDefaultBrush"],
             BorderBrush = (Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"],
             BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(14, 12, 14, 12), Child = currentNetworkContent
+            Padding = new Thickness(12, 10, 12, 10), Child = currentNetworkContent
         };
 
         _bluetoothStatus = new TextBlock { Visibility = Visibility.Collapsed };
@@ -551,7 +636,7 @@ public sealed partial class QuickSettingsPopup : Window
 
     private Grid CreateSplitTile(string glyph, string label, out Button mainButton, out Button expandButton, out TextBlock caption)
     {
-        var tile = new Grid { RowSpacing = 7 };
+        var tile = new Grid { RowSpacing = 4 };
         tile.RowDefinitions.Add(new RowDefinition { Height = new GridLength(48) });
         tile.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         tile.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -582,7 +667,7 @@ public sealed partial class QuickSettingsPopup : Window
         Grid.SetColumn(expandButton, 1);
         caption = new TextBlock
         {
-            Text = label, FontSize = 11, TextTrimming = TextTrimming.CharacterEllipsis,
+            Text = label, FontSize = 10, TextTrimming = TextTrimming.CharacterEllipsis,
             HorizontalAlignment = HorizontalAlignment.Center
         };
         Grid.SetRow(caption, 1);
@@ -960,6 +1045,10 @@ public sealed partial class QuickSettingsPopup : Window
         Activate();
         PopupNativeMethods.BringWindowToTop(hwnd);
         PopupNativeMethods.SetForegroundWindow(hwnd);
+        // Match the native build: the quick settings panel floats above other
+        // windows while visible. Applied after activation because WinUI window
+        // activation reasserts the z-order and would clear the topmost flag.
+        NativeMethods.SetWindowPos(hwnd, new IntPtr(-1) /* HWND_TOPMOST */, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);
     }
 
     public void ToggleVisibility()
@@ -1015,7 +1104,9 @@ public sealed partial class QuickSettingsPopup : Window
         _showUsbDetails = false;
         _showBluetoothDetails = false;
         _showDisplayDetails = false;
-        if (_adapterExpander != null) _adapterExpander.Visibility = Visibility.Visible;
+        // Wireless details embed a compact adapter selector in the extras panel;
+        // the expander card would only duplicate it and waste vertical space.
+        if (_adapterExpander != null) _adapterExpander.Visibility = wireless ? Visibility.Collapsed : Visibility.Visible;
         if (_adapterExpander != null) _adapterExpander.IsExpanded = false;
         _adapterDetailsCard.Visibility = Visibility.Visible;
         SetExpandRotation(_ethernetExpandButton, wireless ? 0 : 90);
@@ -1136,19 +1227,55 @@ public sealed partial class QuickSettingsPopup : Window
         panel.Children.Add(hdr);
         var virtualDisplay = new Button
         {
-            Content = isZh ? "启用已安装的虚拟屏" : "Enable installed virtual display",
+            Content = isZh ? "安装/启用虚拟屏驱动" : "Install/enable virtual display driver",
             IsEnabled = state.ActiveDisplays == 0, HorizontalAlignment = HorizontalAlignment.Stretch
         };
         virtualDisplay.Click += (_, _) =>
         {
-            var enabled = DisplayService.EnableInstalledVirtualDisplay();
-            ShowToast(enabled
-                ? (isZh ? "虚拟显示驱动已启用" : "Virtual display driver enabled")
-                : (isZh ? "未找到可启用的虚拟显示驱动，或驱动启用失败" : "No virtual display driver was found or it could not be enabled"));
+            var driverState = DisplayService.GetVirtualDriverState();
+            if (driverState == DisplayService.VirtualDriverState.Absent)
+            {
+                ShowToast(isZh ? "正在安装虚拟屏驱动…" : "Installing the virtual display driver…");
+                if (!DisplayService.InstallVirtualDisplayDriver())
+                {
+                    ShowToast(isZh ? "未找到驱动包，请将已签名 INF 放入程序目录 drivers 文件夹" : "No driver package found; put a signed INF into the drivers folder");
+                    return;
+                }
+                driverState = DisplayService.GetVirtualDriverState();
+            }
+            if (driverState == DisplayService.VirtualDriverState.Disabled)
+            {
+                var enabled = DisplayService.EnableInstalledVirtualDisplay();
+                ShowToast(enabled
+                    ? (isZh ? "虚拟屏已启用" : "Virtual display enabled")
+                    : (isZh ? "启用失败，请以管理员身份运行后重试" : "Enable failed; run as administrator and retry"));
+            }
+            else if (driverState == DisplayService.VirtualDriverState.Ready)
+            {
+                ShowToast(isZh ? "虚拟屏驱动已就绪" : "The virtual display driver is already ready");
+            }
             RefreshDisplayVisual();
         };
         panel.Children.Add(virtualDisplay);
-        panel.Children.Add(new TextBlock { Text = isZh ? "虚拟屏需要预先安装并签名的 IddCx 驱动。" : "A signed IddCx driver must already be installed.", FontSize = 11, Opacity = 0.7, TextWrapping = TextWrapping.Wrap });
+        var vddAutoButton = new Button
+        {
+            Content = DisplayService.AutoEnable
+                ? (isZh ? "无显示器时自动启用 · 已开启" : "Auto-enable without a display · On")
+                : (isZh ? "无显示器时自动启用 · 已关闭" : "Auto-enable without a display · Off"),
+            HorizontalAlignment = HorizontalAlignment.Stretch
+        };
+        vddAutoButton.Click += (_, _) =>
+        {
+            DisplayService.AutoEnable = !DisplayService.AutoEnable;
+            vddAutoButton.Content = DisplayService.AutoEnable
+                ? (isZh ? "无显示器时自动启用 · 已开启" : "Auto-enable without a display · On")
+                : (isZh ? "无显示器时自动启用 · 已关闭" : "Auto-enable without a display · Off");
+            ShowToast(DisplayService.AutoEnable
+                ? (isZh ? "未检测到实体屏幕时将自动启用虚拟屏" : "The virtual display will auto-enable without a display")
+                : (isZh ? "已关闭虚拟屏自动启用" : "Virtual display auto-enable turned off"));
+        };
+        panel.Children.Add(vddAutoButton);
+        panel.Children.Add(new TextBlock { Text = isZh ? "将已签名的 IddCx 驱动 INF 放入程序目录 drivers 文件夹后可一键安装。" : "Put a signed IddCx driver INF into the \"drivers\" folder next to the app to install it.", FontSize = 11, Opacity = 0.7, TextWrapping = TextWrapping.Wrap });
         _networkExtrasPanel.Children.Add(panel);
         AnimateDetailsCardIn();
         AnimateWindowNearTray();
@@ -1351,7 +1478,7 @@ public sealed partial class QuickSettingsPopup : Window
                 ? (isZh ? "网络适配器" : "Network adapter")
                 : $"{(isZh ? "网络适配器" : "Network adapter")} · {_selectedAdapter.Name}";
 
-        if (_adapterListPanel != null && adapters.Count > 0)
+        if (_adapterListPanel != null && adapters.Count > 0 && !wireless)
         {
             var row = new Grid { ColumnSpacing = 8 };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -1403,7 +1530,7 @@ public sealed partial class QuickSettingsPopup : Window
             row.Children.Add(toggle);
             _adapterListPanel.Children.Add(row);
         }
-        else if (_adapterListPanel != null)
+        else if (_adapterListPanel != null && !wireless)
         {
             _adapterListPanel.Children.Add(new TextBlock
             {
@@ -1660,6 +1787,50 @@ public sealed partial class QuickSettingsPopup : Window
     {
         var isZh = App.Settings.Settings.Language == "zh-CN";
         var panel = new StackPanel { Spacing = 6 };
+        var adapters = _networkService.GetWirelessAdapters();
+        var selected = _selectedWirelessAdapter ?? adapters.FirstOrDefault(a => a.IsUp) ?? adapters.FirstOrDefault();
+        if (selected != null)
+        {
+            // Compact adapter row: selector + enable/disable on one line instead
+            // of a full-width expander card.
+            var adapterRow = new Grid { ColumnSpacing = 6 };
+            adapterRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            adapterRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, DisplayMemberPath = nameof(NetworkAdapter.Name), ItemsSource = adapters, SelectedItem = selected };
+            var toggle = new Button { Content = selected.IsUp ? (isZh ? "禁用" : "Disable") : (isZh ? "启用" : "Enable"), MinWidth = 52 };
+            combo.SelectionChanged += (_, _) =>
+            {
+                if (combo.SelectedItem is not NetworkAdapter picked) return;
+                _selectedWirelessAdapter = _selectedAdapter = picked;
+                toggle.Content = picked.IsUp ? (isZh ? "禁用" : "Disable") : (isZh ? "启用" : "Enable");
+            };
+            toggle.Click += async (_, _) =>
+            {
+                if (combo.SelectedItem is not NetworkAdapter picked || _isOperationInProgress) return;
+                _isOperationInProgress = true;
+                toggle.IsEnabled = false;
+                var success = picked.IsUp
+                    ? await NetworkService.DisableAdapterAsync(picked.InterfaceName)
+                    : await NetworkService.EnableAdapterAsync(picked.InterfaceName);
+                _networkService.RefreshAdapters();
+                ShowToast(success ? (isZh ? "网卡状态已更新" : "Adapter state updated") : (isZh ? "网卡操作失败，请检查管理员权限" : "Adapter operation failed; check administrator privileges"));
+                _isOperationInProgress = false;
+                var refreshed = _networkService.GetWirelessAdapters();
+                combo.ItemsSource = refreshed;
+                var again = refreshed.FirstOrDefault(a => a.Name == picked.Name) ?? refreshed.FirstOrDefault();
+                if (again != null)
+                {
+                    combo.SelectedItem = again;
+                    _selectedWirelessAdapter = _selectedAdapter = again;
+                    toggle.Content = again.IsUp ? (isZh ? "禁用" : "Disable") : (isZh ? "启用" : "Enable");
+                }
+                toggle.IsEnabled = true;
+            };
+            adapterRow.Children.Add(combo);
+            Grid.SetColumn(toggle, 1);
+            adapterRow.Children.Add(toggle);
+            panel.Children.Add(adapterRow);
+        }
         panel.Children.Add(new TextBlock { Text = isZh ? "Wi-Fi 网络" : "Wi-Fi networks", FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         _ = PopulateWifiNetworksAsync(panel, isZh);
         return new Border
@@ -1694,14 +1865,27 @@ public sealed partial class QuickSettingsPopup : Window
             panel.Children.Add(connectedRow);
         }
         var availablePanel = new StackPanel { Spacing = 6 };
-        var availableExpander = new Expander
+        // Flat full-width header instead of a nested expander, so the network
+        // rows keep the whole panel width.
+        var availableHeader = new Grid { ColumnSpacing = 4 };
+        availableHeader.Children.Add(new TextBlock { Text = isZh ? "可用网络" : "Available networks", FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
+        var availableToggle = new Button
         {
-            Header = isZh ? "可用网络" : "Available networks",
-            IsExpanded = true,
-            Margin = new Thickness(0, 4, 0, 0),
-            Content = availablePanel
+            Content = new FontIcon { Glyph = "", FontSize = 10 },
+            Width = 24, Height = 24, Padding = new Thickness(0),
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Right
         };
-        panel.Children.Add(availableExpander);
+        availableHeader.Children.Add(availableToggle);
+        panel.Children.Add(availableHeader);
+        panel.Children.Add(availablePanel);
+        availableToggle.Click += (_, _) =>
+        {
+            var collapsed = availablePanel.Visibility == Visibility.Visible;
+            availablePanel.Visibility = collapsed ? Visibility.Collapsed : Visibility.Visible;
+            ((FontIcon)availableToggle.Content).Glyph = collapsed ? "" : "";
+        };
         var networks = await NetworkService.GetAvailableWifiNetworksAsync();
         if (networks.Count == 0) availablePanel.Children.Add(new TextBlock { Text = isZh ? "未发现网络" : "No networks found", FontSize = 11, Opacity = 0.7 });
         foreach (var network in networks.Take(8))
@@ -2890,6 +3074,10 @@ public sealed partial class QuickSettingsPopup : Window
         public static extern bool IsIconic(IntPtr hWnd);
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         public static extern IntPtr GetForegroundWindow();
+        [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+        public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         public static extern bool BringWindowToTop(IntPtr hWnd);
         [System.Runtime.InteropServices.DllImport("user32.dll")]

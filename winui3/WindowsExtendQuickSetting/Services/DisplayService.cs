@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using Microsoft.Win32;
 
 namespace WindowsEthernetControl.Services;
 
@@ -8,7 +9,11 @@ public static class DisplayService
     private const uint QdcOnlyActivePaths = 0x2;
     private const uint GetAdvancedColorInfo = 9;
     private const uint SetAdvancedColorState = 10;
+    private const string SettingsKey = @"HKEY_CURRENT_USER\Software\WindowsExtendQuickSetting.Native";
+    private static DateTime _lastAutoAttempt = DateTime.MinValue;
     public static bool LastModeWasExtend { get; private set; } = true;
+
+    public enum VirtualDriverState { Absent, Disabled, Ready }
 
     public static bool SwitchMode(bool extend)
     {
@@ -41,7 +46,7 @@ public static class DisplayService
         if (GetHdrState().ActiveDisplays != 0) return false;
         try
         {
-            var script = "$devices=@(Get-PnpDevice -PresentOnly:$false | Where-Object { ($_.Class -eq 'Display' -or $_.Class -eq 'Monitor') -and $_.FriendlyName -match 'Virtual|Indirect|IDD' }); if($devices.Count -eq 0){exit 2}; $devices | Enable-PnpDevice -Confirm:$false -ErrorAction Stop; Start-Sleep -Milliseconds 500; $ready=@($devices | ForEach-Object { Get-PnpDevice -InstanceId $_.InstanceId -ErrorAction SilentlyContinue } | Where-Object Status -eq 'OK'); if($ready.Count -eq 0){exit 3}";
+            var script = "$devices=@(Get-PnpDevice -PresentOnly:$false | Where-Object { ($_.Class -eq 'Display' -or $_.Class -eq 'Monitor') -and $_.FriendlyName -match '" + VirtualDriverMatch + "' }); if($devices.Count -eq 0){exit 2}; $devices | Enable-PnpDevice -Confirm:$false -ErrorAction Stop; Start-Sleep -Milliseconds 500; $ready=@($devices | ForEach-Object { Get-PnpDevice -InstanceId $_.InstanceId -ErrorAction SilentlyContinue } | Where-Object Status -eq 'OK'); if($ready.Count -eq 0){exit 3}";
             using var process = Process.Start(new ProcessStartInfo
             {
                 FileName = "powershell.exe", Arguments = $"-NoProfile -NonInteractive -Command \"{script}\"",
@@ -51,6 +56,77 @@ public static class DisplayService
             return process?.ExitCode == 0;
         }
         catch { return false; }
+    }
+
+    // Matches IddCx-style virtual display adapters from any vendor: Parsec,
+    // ToDesk, usbmmidd, spacedesk, open-source VirtualDisplayDriver, etc.
+    private const string VirtualDriverMatch = "Virtual|Indirect|IDD|Parsec|ToDesk|usbmmidd|spacedesk|SuperDisplay|Duet|VDD";
+
+    // Non-elevated probe for installed IddCx-style virtual display devices.
+    public static VirtualDriverState GetVirtualDriverState()
+    {
+        try
+        {
+            var script = "$d=@(Get-PnpDevice -PresentOnly:$false | Where-Object { ($_.Class -eq 'Display' -or $_.Class -eq 'Monitor') -and $_.FriendlyName -match '" + VirtualDriverMatch + "' }); if($d.Count -eq 0){exit 2}; if(@($d | Where-Object Status -eq 'OK').Count -gt 0){exit 0}else{exit 1}";
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = "powershell.exe", Arguments = $"-NoProfile -NonInteractive -Command \"{script}\"",
+                UseShellExecute = false, CreateNoWindow = true
+            });
+            process?.WaitForExit(30000);
+            return process?.ExitCode switch
+            {
+                0 => VirtualDriverState.Ready,
+                1 => VirtualDriverState.Disabled,
+                _ => VirtualDriverState.Absent
+            };
+        }
+        catch { return VirtualDriverState.Absent; }
+    }
+
+    // Installs a signed driver package dropped into the "drivers" folder next
+    // to the executable (pnputil, elevated). Any IddCx-compatible INF works.
+    public static bool InstallVirtualDisplayDriver()
+    {
+        try
+        {
+            var dir = AppContext.BaseDirectory;
+            foreach (var pattern in new[] { "drivers", "." })
+            {
+                var inf = Directory.GetFiles(Path.Combine(dir, pattern), "*.inf").FirstOrDefault();
+                if (inf == null) continue;
+                using var process = Process.Start(new ProcessStartInfo
+                {
+                    FileName = "pnputil.exe", Arguments = $"/add-driver \"{inf}\" /install",
+                    UseShellExecute = true, Verb = "runas", WindowStyle = ProcessWindowStyle.Hidden
+                });
+                process?.WaitForExit(180000);
+                return process is { HasExited: true, ExitCode: 0 };
+            }
+            return false;
+        }
+        catch { return false; }
+    }
+
+    // Shared with the native build so both front-ends honor the same setting.
+    public static bool AutoEnable
+    {
+        get => Registry.GetValue(SettingsKey, "VddAutoEnable", 0) is int value && value != 0;
+        set => Registry.SetValue(SettingsKey, "VddAutoEnable", value ? 1 : 0, RegistryValueKind.DWord);
+    }
+
+    // Auto-enable the virtual display when no physical monitor is active.
+    // The 60s cooldown (extended to 10min after failures) keeps elevated
+    // re-prompts from turning into a loop.
+    public static bool TryAutoEnsureVirtualDisplay()
+    {
+        if (!AutoEnable || GetHdrState().ActiveDisplays != 0) return false;
+        if ((DateTime.UtcNow - _lastAutoAttempt).TotalSeconds < 60) return false;
+        _lastAutoAttempt = DateTime.UtcNow;
+        if (GetVirtualDriverState() != VirtualDriverState.Disabled) return false;
+        if (EnableInstalledVirtualDisplay()) return true;
+        _lastAutoAttempt = DateTime.UtcNow.AddMinutes(9);
+        return false;
     }
 
     public static (int ActiveDisplays, bool Supported, bool Enabled, bool Extended) GetHdrState()

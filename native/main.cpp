@@ -108,6 +108,8 @@ bool g_displayExtended = true;
 bool g_hdrSupported = false;
 bool g_hdrEnabled = false;
 UINT32 g_activeDisplayCount = 0;
+bool g_vddAuto = false;
+DWORD g_vddLastAttemptTick = 0;
 struct PromptContext { std::wstring label; std::wstring value; HWND edit{}; bool accepted{}; bool multiline{}; bool password{}; };
 struct ChoiceContext { std::wstring label; std::vector<std::wstring> choices; HWND list{}; int selected{ -1 }; };
 WNDPROC g_choiceListOriginalProc{};
@@ -286,6 +288,156 @@ bool SwitchDisplayMode(bool extend) {
     if (result <= 32) return false;
     g_displayExtended = extend;
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// Virtual display (IddCx) integration. Any installed IddCx-style virtual
+// display adapter works — Parsec, ToDesk, usbmmidd, spacedesk, open-source
+// VirtualDisplayDriver, etc. A signed driver package may also be dropped into
+// the "drivers" folder next to the executable to install from scratch.
+// ---------------------------------------------------------------------------
+
+bool IsVirtualDisplayName(const wchar_t* name) {
+    static const wchar_t* keywords[] = {
+        L"virtual", L"indirect", L"idd", L"parsec", L"todesk", L"usbmmidd",
+        L"spacedesk", L"superdisplay", L"duet", L"vdd"
+    };
+    std::wstring value = name;
+    std::transform(value.begin(), value.end(), value.begin(), ::towlower);
+    return std::any_of(std::begin(keywords), std::end(keywords), [&](const wchar_t* keyword) {
+        return value.find(keyword) != std::wstring::npos;
+    });
+}
+
+std::wstring AppDirectory() {
+    wchar_t path[MAX_PATH]{};
+    if (GetModuleFileNameW(nullptr, path, ARRAYSIZE(path)) == 0) return L"";
+    std::wstring dir(path);
+    const auto slash = dir.find_last_of(L"\\/");
+    return slash == std::wstring::npos ? L"" : dir.substr(0, slash);
+}
+
+bool FindVirtualDriverInf(std::wstring& infPath) {
+    const auto dir = AppDirectory();
+    if (dir.empty()) return false;
+    for (const wchar_t* pattern : { L"\\drivers\\*.inf", L"\\*.inf" }) {
+        WIN32_FIND_DATAW data{};
+        const HANDLE find = FindFirstFileW((dir + pattern).c_str(), &data);
+        if (find != INVALID_HANDLE_VALUE) {
+            infPath = dir + (pattern[0] == L'\\' && wcscmp(pattern, L"\\drivers\\*.inf") == 0 ? L"\\drivers\\" : L"\\") + data.cFileName;
+            FindClose(find);
+            return true;
+        }
+    }
+    return false;
+}
+
+// 0 = at least one virtual display device running, 1 = present but disabled,
+// 2 = no virtual display device installed.
+int DetectVirtualDisplayState() {
+    const GUID classes[] = { GUID_DEVCLASS_DISPLAY, GUID_DEVCLASS_MONITOR };
+    bool any = false, ready = false;
+    for (const auto& cls : classes) {
+        const HDEVINFO set = SetupDiGetClassDevsW(&cls, nullptr, nullptr, DIGCF_PRESENT);
+        if (set == INVALID_HANDLE_VALUE) continue;
+        SP_DEVINFO_DATA data{ sizeof(data) };
+        for (DWORD index = 0; SetupDiEnumDeviceInfo(set, index, &data); ++index) {
+            wchar_t name[256]{};
+            DWORD required{};
+            if (!SetupDiGetDeviceRegistryPropertyW(set, &data, SPDRP_FRIENDLYNAME, nullptr,
+                reinterpret_cast<PBYTE>(name), sizeof(name), &required)) continue;
+            if (!IsVirtualDisplayName(name)) continue;
+            any = true;
+            ULONG status{}, problem{};
+            if (CM_Get_DevNode_Status(&status, &problem, data.DevInst, 0) == CR_SUCCESS && (status & DN_STARTED)) ready = true;
+        }
+        SetupDiDestroyDeviceInfoList(set);
+    }
+    return !any ? 2 : (ready ? 0 : 1);
+}
+
+bool EnableVirtualDisplayDevices() {
+    const GUID classes[] = { GUID_DEVCLASS_DISPLAY, GUID_DEVCLASS_MONITOR };
+    bool any = false, enabled = false;
+    for (const auto& cls : classes) {
+        const HDEVINFO set = SetupDiGetClassDevsW(&cls, nullptr, nullptr, DIGCF_PRESENT);
+        if (set == INVALID_HANDLE_VALUE) continue;
+        SP_DEVINFO_DATA data{ sizeof(data) };
+        for (DWORD index = 0; SetupDiEnumDeviceInfo(set, index, &data); ++index) {
+            wchar_t name[256]{};
+            DWORD required{};
+            if (!SetupDiGetDeviceRegistryPropertyW(set, &data, SPDRP_FRIENDLYNAME, nullptr,
+                reinterpret_cast<PBYTE>(name), sizeof(name), &required)) continue;
+            if (!IsVirtualDisplayName(name)) continue;
+            any = true;
+            SP_PROPCHANGE_PARAMS params{};
+            params.ClassInstallHeader.cbSize = sizeof(params.ClassInstallHeader);
+            params.ClassInstallHeader.InstallFunction = DIF_PROPERTYCHANGE;
+            params.StateChange = DICS_ENABLE;
+            params.Scope = DICS_FLAG_GLOBAL;
+            if (SetupDiSetClassInstallParamsW(set, &data, &params.ClassInstallHeader, sizeof(params)) &&
+                SetupDiCallClassInstaller(DIF_PROPERTYCHANGE, set, &data))
+                enabled = true;
+        }
+        SetupDiDestroyDeviceInfoList(set);
+    }
+    return any && enabled;
+}
+
+bool RunElevatedWait(const wchar_t* executable, const wchar_t* arguments) {
+    SHELLEXECUTEINFOW info{ sizeof(info) };
+    info.fMask = SEE_MASK_NOASYNC | SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_DDEWAIT;
+    info.lpVerb = L"runas";
+    info.lpFile = executable;
+    info.lpParameters = arguments;
+    info.nShow = SW_HIDE;
+    if (!ShellExecuteExW(&info) || !info.hProcess) return false;
+    const bool finished = WaitForSingleObject(info.hProcess, 180000) == WAIT_OBJECT_0;
+    CloseHandle(info.hProcess);
+    return finished;
+}
+
+bool InstallVirtualDisplayDriver() {
+    std::wstring inf;
+    if (!FindVirtualDriverInf(inf)) return false;
+    const std::wstring arguments = L"/add-driver \"" + inf + L"\" /install";
+    return RunElevatedWait(L"pnputil.exe", arguments.c_str());
+}
+
+void RefreshVddAuto() {
+    DWORD value{}, size = sizeof(value), type{};
+    HKEY key{};
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\WindowsExtendQuickSetting.Native", 0, KEY_READ, &key) != ERROR_SUCCESS) return;
+    if (RegQueryValueExW(key, L"VddAutoEnable", nullptr, &type, reinterpret_cast<BYTE*>(&value), &size) == ERROR_SUCCESS && type == REG_DWORD)
+        g_vddAuto = value != 0;
+    RegCloseKey(key);
+}
+
+void SaveVddAuto() {
+    HKEY key{};
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\WindowsExtendQuickSetting.Native", 0, nullptr, 0,
+        KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS) return;
+    const DWORD value = g_vddAuto ? 1 : 0;
+    RegSetValueExW(key, L"VddAutoEnable", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&value), sizeof(value));
+    RegCloseKey(key);
+}
+
+// Called from the periodic refresh timer: enables the virtual display
+// automatically when the setting is on and no physical monitor is active.
+void AutoVirtualDisplayCheck() {
+    if (!g_vddAuto || g_activeDisplayCount != 0) return;
+    const DWORD now = GetTickCount();
+    if (g_vddLastAttemptTick != 0 && now - g_vddLastAttemptTick < 60000) return;
+    g_vddLastAttemptTick = now;
+    if (DetectVirtualDisplayState() != 1) return;
+    if (EnableVirtualDisplayDevices()) {
+        RefreshDisplayState();
+        InvalidateRect(g_window, nullptr, FALSE);
+        ShowToast(Tr(L"未检测到实体屏幕，已自动启用虚拟屏", L"No physical display detected; virtual display enabled"));
+    } else {
+        // Failed attempts (missing admin rights, broken driver) back off longer.
+        g_vddLastAttemptTick = now + 540000;
+    }
 }
 
 bool IsLightTaskbar() {
@@ -1751,8 +1903,11 @@ void PaintWindow(HWND hwnd) {
         DrawActionButton(dc, RECT{178, 228, 302, 260}, Tr(L"扩展屏幕", L"Extend displays"), true, g_displayExtended);
         DrawActionButton(dc, RECT{40, 270, 302, 302}, Tr(L"打开屏幕布局设置", L"Open display layout settings"));
         DrawActionButton(dc, RECT{40, 312, 302, 344}, g_hdrEnabled ? Tr(L"HDR · 已启用（点击关闭）", L"HDR · On (click to turn off)") : Tr(L"HDR · 已关闭（点击启用）", L"HDR · Off (click to turn on)"), g_hdrSupported);
-        DrawActionButton(dc, RECT{40, 354, 302, 386}, g_activeDisplayCount == 0 ? Tr(L"启用已安装的虚拟屏", L"Enable installed virtual display") : Tr(L"虚拟屏 · 仅在无物理屏幕时可用", L"Virtual display · Available only without a physical display"), g_activeDisplayCount == 0);
-        DrawText(dc, Tr(L"需要预先安装并签名的 IddCx 驱动", L"A signed IddCx driver must already be installed"), 40, 388, 270, 24, RGB(110, 110, 110), 10);
+        DrawActionButton(dc, RECT{40, 354, 302, 386}, g_activeDisplayCount == 0 ? Tr(L"安装/启用虚拟屏驱动", L"Install/enable virtual display driver") : Tr(L"虚拟屏 · 仅在无物理屏幕时可用", L"Virtual display · Available only without a physical display"), g_activeDisplayCount == 0);
+        DrawActionButton(dc, RECT{40, 392, 302, 424}, g_vddAuto
+            ? Tr(L"无显示器时自动启用 · 已开启", L"Auto-enable without a display · On")
+            : Tr(L"无显示器时自动启用 · 已关闭", L"Auto-enable without a display · Off"), true);
+        DrawText(dc, Tr(L"将已签名的 IddCx 驱动 INF 放入程序目录 drivers 文件夹", L"Put a signed IddCx driver INF into the \"drivers\" folder next to the app"), 40, 428, 270, 24, RGB(110, 110, 110), 10);
     } else if (g_detailsVisible) {
         DrawText(dc, Tr(L"请选择上方快捷卡片查看详情。", L"Select a quick card above to view details."), 40, 200, 280, 20, RGB(100, 100, 100), 11);
     }
@@ -1912,6 +2067,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
             RefreshDohEnabled();
             RefreshNetworkAdapters();
             RefreshDisplayState();
+            AutoVirtualDisplayCheck();
             InvalidateRect(hwnd, nullptr, FALSE);
         } else if (wparam == kFadeTimer) {
             if (g_fadeHiding) {
@@ -2166,9 +2322,29 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
         } else if (g_detailsVisible && g_detailsKind == 5 && y >= 308 && y < 350 && g_hdrSupported) {
             ShowToast(SetHdrEnabled(!g_hdrEnabled) ? (g_hdrEnabled ? Tr(L"HDR 已启用", L"HDR enabled") : Tr(L"HDR 已关闭", L"HDR disabled")) : Tr(L"HDR 操作失败", L"HDR operation failed"));
         } else if (g_detailsVisible && g_detailsKind == 5 && y >= 350 && y < 388 && g_activeDisplayCount == 0) {
-            const bool enabled = RunHidden(L"powershell.exe -NoProfile -NonInteractive -Command \"$devices=@(Get-PnpDevice -PresentOnly:$false ^| Where-Object { ($_.Class -eq 'Display' -or $_.Class -eq 'Monitor') -and $_.FriendlyName -match 'Virtual^|Indirect^|IDD' }); if($devices.Count -eq 0){exit 2}; $devices ^| Enable-PnpDevice -Confirm:$false -ErrorAction Stop; Start-Sleep -Milliseconds 500; $ready=@($devices ^| ForEach-Object { Get-PnpDevice -InstanceId $_.InstanceId -ErrorAction SilentlyContinue } ^| Where-Object Status -eq 'OK'); if($ready.Count -eq 0){exit 3}\"");
-            RefreshDisplayState();
-            ShowToast(enabled ? Tr(L"已请求启用虚拟显示驱动", L"Virtual display driver enabled") : Tr(L"未找到可启用的虚拟显示驱动", L"No installed virtual display driver was found"));
+            int state = DetectVirtualDisplayState();
+            std::wstring infPath;
+            if (state == 2 && FindVirtualDriverInf(infPath)) {
+                ShowToast(Tr(L"正在安装虚拟屏驱动…", L"Installing the virtual display driver…"));
+                InstallVirtualDisplayDriver();
+                state = DetectVirtualDisplayState();
+            }
+            if (state == 1 && EnableVirtualDisplayDevices()) {
+                RefreshDisplayState();
+                ShowToast(Tr(L"虚拟屏已启用", L"Virtual display enabled"));
+            } else if (state == 0) {
+                ShowToast(Tr(L"虚拟屏驱动已就绪", L"The virtual display driver is already ready"));
+            } else if (state == 2) {
+                ShowToast(Tr(L"未找到虚拟屏驱动，请将已签名 INF 放入 drivers 文件夹", L"No virtual display driver found; put a signed INF into the drivers folder"));
+            } else {
+                ShowToast(Tr(L"启用失败，请以管理员身份运行后重试", L"Enable failed; run as administrator and retry"));
+            }
+        } else if (g_detailsVisible && g_detailsKind == 5 && y >= 392 && y < 424) {
+            g_vddAuto = !g_vddAuto;
+            SaveVddAuto();
+            ShowToast(g_vddAuto
+                ? Tr(L"未检测到实体屏幕时将自动启用虚拟屏", L"The virtual display will auto-enable without a display")
+                : Tr(L"已关闭虚拟屏自动启用", L"Virtual display auto-enable turned off"));
         } else if (g_detailsVisible && g_detailsKind == 3 && y >= 228 && y < 468) {
             const auto index = static_cast<size_t>((y - 228) / 24);
             if (index < g_networkAdapters.size()) {
@@ -2310,6 +2486,7 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     g_tray.uVersion = NOTIFYICON_VERSION_4;
     Shell_NotifyIconW(NIM_SETVERSION, &g_tray);
     RefreshLanguage();
+    RefreshVddAuto();
     RefreshWifiStatus();
     RefreshBluetoothAdapters();
     RefreshBluetoothDevices();
