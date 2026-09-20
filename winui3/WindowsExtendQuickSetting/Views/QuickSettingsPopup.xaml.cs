@@ -390,6 +390,8 @@ public sealed partial class QuickSettingsPopup : Window
         try
         {
             if (_appWindow == null) return;
+            // Measure with the current visibility state, not the previous one.
+            Content?.UpdateLayout();
             NativeMethods.GetCursorPos(out var cursor);
             var monitor = NativeMethods.MonitorFromPoint(cursor, NativeMethods.MonitorDefaultToNearest);
             var monitorInfo = new NativeMethods.MONITORINFO { Size = (uint)System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.MONITORINFO>() };
@@ -563,7 +565,7 @@ public sealed partial class QuickSettingsPopup : Window
         };
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_currentNetworkExpandButton,
             isZh ? "展开或收起当前网络" : "Expand or collapse current network");
-        SetExpandRotation(_currentNetworkExpandButton, _currentNetworkExpanded ? 0 : 180);
+        SetExpandRotation(_currentNetworkExpandButton, _currentNetworkExpanded ? 180 : 0);
         ToolTipService.SetToolTip(_currentNetworkExpandButton, isZh ? "收起当前网络详情" : "Collapse current network details");
         _currentNetworkExpandButton.Click += (_, _) => ToggleCurrentNetworkDetails();
         Grid.SetColumn(_currentNetworkExpandButton, 1);
@@ -934,7 +936,7 @@ public sealed partial class QuickSettingsPopup : Window
         if (_currentNetworkExpandButton != null)
         {
             // 0° = right (collapsed), 90° = down (expanded), matching the tile chevrons.
-            SetExpandRotation(_currentNetworkExpandButton, _currentNetworkExpanded ? 0 : 180);
+            SetExpandRotation(_currentNetworkExpandButton, _currentNetworkExpanded ? 180 : 0);
             ToolTipService.SetToolTip(_currentNetworkExpandButton, _currentNetworkExpanded
                 ? (App.Settings.Settings.Language == "zh-CN" ? "收起当前网络详情" : "Collapse current network details")
                 : (App.Settings.Settings.Language == "zh-CN" ? "展开当前网络详情" : "Expand current network details"));
@@ -2375,6 +2377,11 @@ public sealed partial class QuickSettingsPopup : Window
         {
             var workArea = DisplayArea.Primary.WorkArea;
             const int targetWidth = 367;
+            // The visibility change that triggered this call has not been
+            // measured yet; without a forced pass the desired height reflects
+            // the PREVIOUS state and the window grows on collapse / stays
+            // small on expand.
+            Content?.UpdateLayout();
             var targetHeight = DesiredPanelHeight();
             var targetX = workArea.X + workArea.Width - targetWidth - 16;
             var targetY = workArea.Y + workArea.Height - targetHeight - 8;
@@ -2395,6 +2402,16 @@ public sealed partial class QuickSettingsPopup : Window
             }
         }
         catch (OperationCanceledException) { }
+        finally
+        {
+            // Async populations (Bluetooth scan results, DoH status text) keep
+            // growing the content after the animation; re-tighten once settled.
+            _ = DispatcherQueue.TryEnqueue(async () =>
+            {
+                await Task.Delay(200);
+                PositionNearTray();
+            });
+        }
     }
 
     private void InitializeBackdrop(ElementTheme theme)
