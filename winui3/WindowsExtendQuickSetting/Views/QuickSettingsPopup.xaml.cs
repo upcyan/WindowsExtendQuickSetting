@@ -563,7 +563,7 @@ public sealed partial class QuickSettingsPopup : Window
         };
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_currentNetworkExpandButton,
             isZh ? "展开或收起当前网络" : "Expand or collapse current network");
-        SetExpandRotation(_currentNetworkExpandButton, _currentNetworkExpanded ? 180 : 0);
+        SetExpandRotation(_currentNetworkExpandButton, _currentNetworkExpanded ? 0 : 180);
         ToolTipService.SetToolTip(_currentNetworkExpandButton, isZh ? "收起当前网络详情" : "Collapse current network details");
         _currentNetworkExpandButton.Click += (_, _) => ToggleCurrentNetworkDetails();
         Grid.SetColumn(_currentNetworkExpandButton, 1);
@@ -933,7 +933,8 @@ public sealed partial class QuickSettingsPopup : Window
             _networkDohControlPanel.Visibility = _currentNetworkExpanded ? Visibility.Visible : Visibility.Collapsed;
         if (_currentNetworkExpandButton != null)
         {
-            SetExpandRotation(_currentNetworkExpandButton, _currentNetworkExpanded ? 180 : 0);
+            // 0° = right (collapsed), 90° = down (expanded), matching the tile chevrons.
+            SetExpandRotation(_currentNetworkExpandButton, _currentNetworkExpanded ? 0 : 180);
             ToolTipService.SetToolTip(_currentNetworkExpandButton, _currentNetworkExpanded
                 ? (App.Settings.Settings.Language == "zh-CN" ? "收起当前网络详情" : "Collapse current network details")
                 : (App.Settings.Settings.Language == "zh-CN" ? "展开当前网络详情" : "Expand current network details"));
