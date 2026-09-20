@@ -46,14 +46,21 @@ public static class DisplayService
         if (GetHdrState().ActiveDisplays != 0) return false;
         try
         {
-            var script = "$devices=@(Get-PnpDevice -PresentOnly:$false | Where-Object { ($_.Class -eq 'Display' -or $_.Class -eq 'Monitor') -and $_.FriendlyName -match '" + VirtualDriverMatch + "' }); if($devices.Count -eq 0){exit 2}; $devices | Enable-PnpDevice -Confirm:$false -ErrorAction Stop; Start-Sleep -Milliseconds 500; $ready=@($devices | ForEach-Object { Get-PnpDevice -InstanceId $_.InstanceId -ErrorAction SilentlyContinue } | Where-Object Status -eq 'OK'); if($ready.Count -eq 0){exit 3}";
+            var script = "$devices=@(Get-PnpDevice | Where-Object { ($_.Class -eq 'Display' -or $_.Class -eq 'Monitor') -and $_.FriendlyName -match '" + VirtualDriverMatch + "' }); if($devices.Count -eq 0){exit 2}; $devices | Enable-PnpDevice -Confirm:$false -ErrorAction Stop; Start-Sleep -Milliseconds 500; $ready=@($devices | ForEach-Object { Get-PnpDevice -InstanceId $_.InstanceId -ErrorAction SilentlyContinue } | Where-Object Status -eq 'OK'); if($ready.Count -eq 0){exit 3}";
             using var process = Process.Start(new ProcessStartInfo
             {
                 FileName = "powershell.exe", Arguments = $"-NoProfile -NonInteractive -Command \"{script}\"",
                 UseShellExecute = true, Verb = "runas", WindowStyle = ProcessWindowStyle.Hidden
             });
-            process?.WaitForExit();
-            return process?.ExitCode == 0;
+            if (process == null) return false;
+            // An enable that takes 3 minutes is not coming back; kill it instead
+            // of blocking forever (caller runs this off the UI thread).
+            if (!process.WaitForExit(180000))
+            {
+                try { process.Kill(true); } catch { }
+                return false;
+            }
+            return process.ExitCode == 0;
         }
         catch { return false; }
     }
@@ -63,18 +70,27 @@ public static class DisplayService
     private const string VirtualDriverMatch = "Virtual|Indirect|IDD|Parsec|ToDesk|usbmmidd|spacedesk|SuperDisplay|Duet|VDD";
 
     // Non-elevated probe for installed IddCx-style virtual display devices.
+    // Present-only, matching the native build's DIGCF_PRESENT enumeration, so
+    // leftover non-present device records never read as "Disabled".
     public static VirtualDriverState GetVirtualDriverState()
     {
         try
         {
-            var script = "$d=@(Get-PnpDevice -PresentOnly:$false | Where-Object { ($_.Class -eq 'Display' -or $_.Class -eq 'Monitor') -and $_.FriendlyName -match '" + VirtualDriverMatch + "' }); if($d.Count -eq 0){exit 2}; if(@($d | Where-Object Status -eq 'OK').Count -gt 0){exit 0}else{exit 1}";
+            var script = "$d=@(Get-PnpDevice | Where-Object { ($_.Class -eq 'Display' -or $_.Class -eq 'Monitor') -and $_.FriendlyName -match '" + VirtualDriverMatch + "' }); if($d.Count -eq 0){exit 2}; if(@($d | Where-Object Status -eq 'OK').Count -gt 0){exit 0}else{exit 1}";
             using var process = Process.Start(new ProcessStartInfo
             {
                 FileName = "powershell.exe", Arguments = $"-NoProfile -NonInteractive -Command \"{script}\"",
                 UseShellExecute = false, CreateNoWindow = true
             });
-            process?.WaitForExit(30000);
-            return process?.ExitCode switch
+            if (process == null) return VirtualDriverState.Absent;
+            // Reading ExitCode on a timed-out process throws; kill and report a
+            // clean Absent instead so callers can branch on the enum.
+            if (!process.WaitForExit(30000))
+            {
+                try { process.Kill(true); } catch { }
+                return VirtualDriverState.Absent;
+            }
+            return process.ExitCode switch
             {
                 0 => VirtualDriverState.Ready,
                 1 => VirtualDriverState.Disabled,

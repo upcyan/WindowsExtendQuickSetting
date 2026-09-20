@@ -64,6 +64,7 @@ public sealed partial class QuickSettingsPopup : Window
     private TextBlock? _networkAddressText;
     private TextBlock? _networkDnsText;
     private TextBlock? _networkDohText;
+    private Button? _networkDohEntry;
     private Border? _currentNetworkHost;
     private StackPanel? _networkDetailsPanel;
     private FrameworkElement? _networkDohControlPanel;
@@ -190,6 +191,8 @@ public sealed partial class QuickSettingsPopup : Window
             CornerRadius = new CornerRadius(8),
             Content = new FontIcon { Glyph = "\uE713", FontSize = 16 }
         };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_navigationButton,
+            App.Settings.Settings.Language == "zh-CN" ? "设置" : "Settings");
         _navigationButton.Click += SettingsBtn_Click;
         Grid.SetColumn(_navigationButton, 1);
         footerGrid.Children.Add(_navigationButton);
@@ -365,6 +368,23 @@ public sealed partial class QuickSettingsPopup : Window
         public struct POINT { public int X; public int Y; }
     }
 
+    // Panel height that hugs the content: measured chrome (title bar, pinned
+    // network card, footer) plus the cards area's desired height. Falls back
+    // to the state constants until a layout pass has produced real numbers,
+    // and never grows past 660 — longer pages scroll the rest instead.
+    private int DesiredPanelHeight()
+    {
+        var fallback = _showingSettings || _showingDohSettings ? 610 : _adapterDetailsCard?.Visibility == Visibility.Visible ? 620 : 520;
+        var root = Content as FrameworkElement;
+        if (_contentScroll == null || root == null || root.ActualHeight <= 0) return fallback;
+        var cardsHeight = CardsPanel.DesiredSize.Height;
+        if (cardsHeight <= 0) return fallback;
+        var chrome = root.ActualHeight - _contentScroll.ActualHeight;
+        var needed = chrome + cardsHeight + _contentScroll.Padding.Top + _contentScroll.Padding.Bottom;
+        var scale = _contentScroll.XamlRoot?.RasterizationScale ?? 1.0;
+        return (int)Math.Clamp(Math.Round(needed * scale), (int)Math.Round(360 * scale), (int)Math.Round(660 * scale));
+    }
+
     public void PositionNearTray()
     {
         try
@@ -376,8 +396,9 @@ public sealed partial class QuickSettingsPopup : Window
             if (!NativeMethods.GetMonitorInfo(monitor, ref monitorInfo)) return;
             var workArea = monitorInfo.Work;
             var screen = monitorInfo.Monitor;
-            var panelW = 367;
-            var panelH = _showingSettings || _showingDohSettings ? 610 : _adapterDetailsCard?.Visibility == Visibility.Visible ? 620 : 520;
+            var scale = _contentScroll?.XamlRoot?.RasterizationScale ?? 1.0;
+            var panelW = (int)Math.Round(367 * scale);
+            var panelH = DesiredPanelHeight();
             var x = workArea.Right - panelW - 16;
             var y = workArea.Bottom - panelH - 8;
             if (workArea.Left > screen.Left) x = workArea.Left + 8;
@@ -466,27 +487,27 @@ public sealed partial class QuickSettingsPopup : Window
         quickGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         quickGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-        var ethernetTile = CreateSplitTile("\uE839", isZh ? "未连接" : "Disconnected", out _toggleBtn, out _ethernetExpandButton, out _ethernetCaption);
+        var ethernetTile = CreateSplitTile("\uE839", isZh ? "未连接" : "Disconnected", isZh ? "以太网" : "Ethernet", out _toggleBtn, out _ethernetExpandButton, out _ethernetCaption);
         _toggleBtn.Click += EthernetToggle_Click;
         _ethernetExpandButton.Click += (_, _) => ShowAdapterDetails(false);
         ToolTipService.SetToolTip(_ethernetExpandButton, isZh ? "查看有线网卡" : "Show Ethernet adapters");
         quickGrid.Children.Add(ethernetTile);
 
-        var wifiTile = CreateSplitTile("\uE701", isZh ? "未连接" : "Disconnected", out _wifiButton, out _wifiExpandButton, out _wifiCaption);
+        var wifiTile = CreateSplitTile("\uE701", isZh ? "未连接" : "Disconnected", "Wi-Fi", out _wifiButton, out _wifiExpandButton, out _wifiCaption);
         _wifiButton.Click += WifiToggle_Click;
         _wifiExpandButton.Click += (_, _) => ShowAdapterDetails(true);
         ToolTipService.SetToolTip(_wifiExpandButton, isZh ? "查看并连接 Wi-Fi 网络（SSID）" : "Show and connect to Wi-Fi networks (SSIDs)");
         Grid.SetColumn(wifiTile, 1);
         quickGrid.Children.Add(wifiTile);
 
-        var bluetoothTile = CreateSplitTile("\uE702", isZh ? "未连接" : "Disconnected", out _bluetoothButton, out _bluetoothExpandButton, out _bluetoothCaption);
+        var bluetoothTile = CreateSplitTile("\uE702", isZh ? "未连接" : "Disconnected", isZh ? "蓝牙" : "Bluetooth", out _bluetoothButton, out _bluetoothExpandButton, out _bluetoothCaption);
         _bluetoothButton.Click += BluetoothButton_Click;
         _bluetoothExpandButton.Click += (_, _) => ShowBluetoothDetails();
         ToolTipService.SetToolTip(_bluetoothExpandButton, isZh ? "管理蓝牙设备" : "Manage Bluetooth devices");
         Grid.SetColumn(bluetoothTile, 2);
         quickGrid.Children.Add(bluetoothTile);
 
-        var usbTile = CreateSplitTile("\uE88E", isZh ? "未连接" : "Disconnected", out _usbButton, out _usbExpandButton, out _usbCaption);
+        var usbTile = CreateSplitTile("\uE88E", isZh ? "未连接" : "Disconnected", isZh ? "USB 网络共享" : "USB tethering", out _usbButton, out _usbExpandButton, out _usbCaption);
         _usbButton.Click += UsbToggle_Click;
         _usbExpandButton.Click += (_, _) => ShowUsbDetails();
         ToolTipService.SetToolTip(_usbButton, isZh ? "启用或断开手机 USB 网络共享" : "Enable or disconnect phone USB tethering");
@@ -498,7 +519,7 @@ public sealed partial class QuickSettingsPopup : Window
         var displayCaption = displayState.ActiveDisplays <= 1
             ? (isZh ? "单屏" : "Single")
             : displayState.Extended ? (isZh ? "扩展" : "Extend") : (isZh ? "复制" : "Duplicate");
-        var displayTile = CreateSplitTile("\uE7F4", displayCaption, out _displayButton, out _displayExpandButton, out _displayCaption);
+        var displayTile = CreateSplitTile("\uE7F4", displayCaption, isZh ? "屏幕" : "Display", out _displayButton, out _displayExpandButton, out _displayCaption);
         _displayButton.Click += (_, _) =>
         {
             var extend = !DisplayService.LastModeWasExtend;
@@ -540,6 +561,8 @@ public sealed partial class QuickSettingsPopup : Window
             BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(14),
             VerticalAlignment = VerticalAlignment.Center
         };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_currentNetworkExpandButton,
+            isZh ? "展开或收起当前网络" : "Expand or collapse current network");
         SetExpandRotation(_currentNetworkExpandButton, _currentNetworkExpanded ? 180 : 0);
         ToolTipService.SetToolTip(_currentNetworkExpandButton, isZh ? "收起当前网络详情" : "Collapse current network details");
         _currentNetworkExpandButton.Click += (_, _) => ToggleCurrentNetworkDetails();
@@ -548,22 +571,46 @@ public sealed partial class QuickSettingsPopup : Window
         _networkNameText = new TextBlock { FontSize = 12 };
         _networkAddressText = new TextBlock { FontSize = 11, Opacity = 0.72, TextWrapping = TextWrapping.Wrap };
         _networkDnsText = new TextBlock { FontSize = 11, Opacity = 0.72, TextWrapping = TextWrapping.Wrap };
-        _networkDohText = new TextBlock { FontSize = 11, Opacity = 0.78, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
-        // Tapping the DoH status line opens the DoH settings page (replaces the
-        // removed gear button, matching the native build).
-        _networkDohText.Tapped += (_, _) =>
+        _networkDohText = new TextBlock { FontSize = 11, Opacity = 0.78, TextWrapping = TextWrapping.Wrap };
+        // The whole DoH status line is the entry to the DoH settings page: a
+        // button with hover feedback and a trailing chevron, so the affordance
+        // is visible instead of relying on the tooltip alone.
+        _networkDohEntry = new Button
+        {
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(6, 3, 6, 3),
+            MinHeight = 0,
+            CornerRadius = new CornerRadius(6),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 4,
+                Children =
+                {
+                    _networkDohText,
+                    new FontIcon { Glyph = "\uE76C", FontSize = 10, Opacity = 0.55 }
+                }
+            }
+        };
+        _networkDohEntry.Click += (_, _) =>
         {
             _showingSettings = false;
             _showingDohSettings = true;
             ShowCurrentPage();
         };
-        ToolTipService.SetToolTip(_networkDohText,
+        ToolTipService.SetToolTip(_networkDohEntry,
             App.Settings.Settings.Language == "zh-CN" ? "点击打开 DoH 设置" : "Click to open DoH settings");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_networkDohEntry,
+            App.Settings.Settings.Language == "zh-CN" ? "打开 DoH 设置" : "Open DoH settings");
+        _networkDohEntry.Visibility = Visibility.Collapsed;
         networkInfo.Children.Add(_networkNameText);
         _networkDetailsPanel = new StackPanel { Spacing = 3, Visibility = _currentNetworkExpanded ? Visibility.Visible : Visibility.Collapsed };
         _networkDetailsPanel.Children.Add(_networkAddressText);
         _networkDetailsPanel.Children.Add(_networkDnsText);
-        _networkDetailsPanel.Children.Add(_networkDohText);
+        _networkDetailsPanel.Children.Add(_networkDohEntry);
         networkInfo.Children.Add(_networkDetailsPanel);
         var infoGrid = new Grid { ColumnSpacing = 10 };
         infoGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -574,6 +621,7 @@ public sealed partial class QuickSettingsPopup : Window
         var dohPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom };
         dohPanel.Children.Add(new TextBlock { Text = "DoH", FontSize = 11, VerticalAlignment = VerticalAlignment.Center });
         _dohToggle = new Button { Width = 42, Height = 22, Padding = new Thickness(3, 2, 3, 2), CornerRadius = new CornerRadius(11) };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_dohToggle, "DoH");
         _dohToggle.Click += DohToggle_Click;
         dohPanel.Children.Add(_dohToggle);
         _networkDohControlPanel = dohPanel;
@@ -634,7 +682,7 @@ public sealed partial class QuickSettingsPopup : Window
         _ = RefreshBluetoothAsync();
     }
 
-    private Grid CreateSplitTile(string glyph, string label, out Button mainButton, out Button expandButton, out TextBlock caption)
+    private Grid CreateSplitTile(string glyph, string label, string automationName, out Button mainButton, out Button expandButton, out TextBlock caption)
     {
         var tile = new Grid { RowSpacing = 4 };
         tile.RowDefinitions.Add(new RowDefinition { Height = new GridLength(48) });
@@ -664,6 +712,12 @@ public sealed partial class QuickSettingsPopup : Window
         };
         ConfigureTileHover(mainButton);
         ConfigureTileHover(expandButton);
+        var isZh = App.Settings.Settings.Language == "zh-CN";
+        // The caption is state text ("未连接"...) that changes at runtime; the
+        // automation name needs the stable tile identity instead.
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(mainButton, automationName);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(expandButton,
+            isZh ? $"展开 {automationName}" : $"Expand {automationName}");
         Grid.SetColumn(expandButton, 1);
         caption = new TextBlock
         {
@@ -859,6 +913,7 @@ public sealed partial class QuickSettingsPopup : Window
             _networkAddressText.Text = "";
             _networkDnsText.Text = "";
             if (_networkDohText != null) { _networkDohText.Text = ""; _networkDohText.Visibility = Visibility.Collapsed; }
+            if (_networkDohEntry != null) _networkDohEntry.Visibility = Visibility.Collapsed;
             return;
         }
         var type = _activeNetworkAdapter.IsWireless ? "Wi-Fi" : (_activeNetworkAdapter.IsUsbTethering ? (isZh ? "USB 网络共享" : "USB tethering") : (isZh ? "有线网络" : "Ethernet"));
@@ -887,18 +942,24 @@ public sealed partial class QuickSettingsPopup : Window
 
     private async Task UpdateEffectiveDohInfoAsync(NetworkAdapter adapter, bool isZh)
     {
-        if (_networkDohText == null) return;
+        if (_networkDohText == null || _networkDohEntry == null) return;
         var target = _networkDohText;
+        // The entry row stays visible (and clickable) even when DoH is off —
+        // it is the only path back into the DoH settings page.
+        _networkDohEntry.Visibility = Visibility.Visible;
+        target.Visibility = Visibility.Visible;
         if (!App.Settings.Settings.DnsOverHttpsEnabled)
         {
-            target.Visibility = Visibility.Collapsed;
-            target.Text = "";
+            target.Opacity = 0.55;
+            target.Text = isZh ? "DoH：已关闭" : "DoH: Off";
             return;
         }
-        target.Visibility = Visibility.Visible;
+        target.Opacity = 0.78;
         target.Text = isZh ? "DoH：正在确认生效状态…" : "DoH: Checking effective status…";
         var system = await GetSystemDohServersAsync();
-        if (!ReferenceEquals(target, _networkDohText) || !ReferenceEquals(adapter, _activeNetworkAdapter)) return;
+        if (_networkDohText == null || _networkDohEntry == null || !ReferenceEquals(adapter, _activeNetworkAdapter)) return;
+        // The tree may have been rebuilt while awaiting; write to the current one.
+        target = _networkDohText;
         var templates = system.ToDictionary(item => item.Server, item => item.Template, StringComparer.OrdinalIgnoreCase);
         var effective = adapter.DnsServers.Where(templates.ContainsKey).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         target.Text = effective.Count > 0
@@ -928,9 +989,10 @@ public sealed partial class QuickSettingsPopup : Window
             UpdateDohVisual();
             UpdateNetworkDetails();
         }
+        var isZh = App.Settings.Settings.Language == "zh-CN";
         ShowToast(success
-            ? (enabled ? "DoH enabled" : "DoH disabled")
-            : "Unable to change DoH");
+            ? (enabled ? (isZh ? "DoH 已启用" : "DoH enabled") : (isZh ? "DoH 已关闭" : "DoH disabled"))
+            : (isZh ? "DoH 设置失败，请检查管理员权限" : "Unable to change DoH"));
         _isOperationInProgress = false;
         _dohToggle.IsEnabled = true;
     }
@@ -1049,6 +1111,14 @@ public sealed partial class QuickSettingsPopup : Window
         // windows while visible. Applied after activation because WinUI window
         // activation reasserts the z-order and would clear the topmost flag.
         NativeMethods.SetWindowPos(hwnd, new IntPtr(-1) /* HWND_TOPMOST */, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);
+        // The first PositionNearTray runs before any layout pass, so it uses
+        // the state fallback height. Re-run once the tree has been measured
+        // and DesiredPanelHeight can tighten the window around its content.
+        _ = DispatcherQueue.TryEnqueue(async () =>
+        {
+            await Task.Delay(40);
+            PositionNearTray();
+        });
     }
 
     public void ToggleVisibility()
@@ -1230,31 +1300,51 @@ public sealed partial class QuickSettingsPopup : Window
             Content = isZh ? "安装/启用虚拟屏驱动" : "Install/enable virtual display driver",
             IsEnabled = state.ActiveDisplays == 0, HorizontalAlignment = HorizontalAlignment.Stretch
         };
-        virtualDisplay.Click += (_, _) =>
+        virtualDisplay.Click += async (_, _) =>
         {
-            var driverState = DisplayService.GetVirtualDriverState();
-            if (driverState == DisplayService.VirtualDriverState.Absent)
+            // Probe/install/enable each shell out (pnputil even shows a UAC
+            // prompt), so all of it runs off the UI thread; the button carries
+            // progress text while the window stays responsive.
+            virtualDisplay.IsEnabled = false;
+            var originalContent = virtualDisplay.Content;
+            try
             {
-                ShowToast(isZh ? "正在安装虚拟屏驱动…" : "Installing the virtual display driver…");
-                if (!DisplayService.InstallVirtualDisplayDriver())
+                ShowToast(isZh ? "正在检测虚拟屏驱动…" : "Checking the virtual display driver…");
+                var driverState = await Task.Run(DisplayService.GetVirtualDriverState);
+                if (driverState == DisplayService.VirtualDriverState.Absent)
+                {
+                    virtualDisplay.Content = isZh ? "正在安装虚拟屏驱动…" : "Installing the virtual display driver…";
+                    ShowToast(isZh ? "正在安装虚拟屏驱动…（可能在等待管理员确认）" : "Installing the virtual display driver… (may wait for admin consent)");
+                    if (!await Task.Run(DisplayService.InstallVirtualDisplayDriver))
+                    {
+                        ShowToast(isZh ? "未找到驱动包，请将已签名 INF 放入程序目录 drivers 文件夹" : "No driver package found; put a signed INF into the drivers folder");
+                        return;
+                    }
+                    driverState = await Task.Run(DisplayService.GetVirtualDriverState);
+                }
+                if (driverState == DisplayService.VirtualDriverState.Disabled)
+                {
+                    virtualDisplay.Content = isZh ? "正在启用虚拟屏…" : "Enabling the virtual display…";
+                    var enabled = await Task.Run(DisplayService.EnableInstalledVirtualDisplay);
+                    ShowToast(enabled
+                        ? (isZh ? "虚拟屏已启用" : "Virtual display enabled")
+                        : (isZh ? "启用失败，请以管理员身份运行后重试" : "Enable failed; run as administrator and retry"));
+                }
+                else if (driverState == DisplayService.VirtualDriverState.Ready)
+                {
+                    ShowToast(isZh ? "虚拟屏驱动已就绪" : "The virtual display driver is already ready");
+                }
+                else
                 {
                     ShowToast(isZh ? "未找到驱动包，请将已签名 INF 放入程序目录 drivers 文件夹" : "No driver package found; put a signed INF into the drivers folder");
-                    return;
                 }
-                driverState = DisplayService.GetVirtualDriverState();
+                RefreshDisplayVisual();
             }
-            if (driverState == DisplayService.VirtualDriverState.Disabled)
+            finally
             {
-                var enabled = DisplayService.EnableInstalledVirtualDisplay();
-                ShowToast(enabled
-                    ? (isZh ? "虚拟屏已启用" : "Virtual display enabled")
-                    : (isZh ? "启用失败，请以管理员身份运行后重试" : "Enable failed; run as administrator and retry"));
+                virtualDisplay.Content = originalContent;
+                virtualDisplay.IsEnabled = state.ActiveDisplays == 0;
             }
-            else if (driverState == DisplayService.VirtualDriverState.Ready)
-            {
-                ShowToast(isZh ? "虚拟屏驱动已就绪" : "The virtual display driver is already ready");
-            }
-            RefreshDisplayVisual();
         };
         panel.Children.Add(virtualDisplay);
         var vddAutoButton = new Button
@@ -2284,7 +2374,7 @@ public sealed partial class QuickSettingsPopup : Window
         {
             var workArea = DisplayArea.Primary.WorkArea;
             const int targetWidth = 367;
-            var targetHeight = _showingSettings || _showingDohSettings ? 650 : _adapterDetailsCard?.Visibility == Visibility.Visible ? 660 : 570;
+            var targetHeight = DesiredPanelHeight();
             var targetX = workArea.X + workArea.Width - targetWidth - 16;
             var targetY = workArea.Y + workArea.Height - targetHeight - 8;
             var start = _appWindow.Position;

@@ -20,6 +20,8 @@ namespace {
 constexpr wchar_t kClassName[] = L"WindowsExtendQuickSetting.Native";
 constexpr wchar_t kTitle[] = L"WindowsExtendQuickSetting";
 constexpr UINT kTrayMessage = WM_APP + 1;
+// Posted by the virtual-display worker thread once install/enable finished.
+constexpr UINT kVddWorkMessage = WM_APP + 2;
 constexpr UINT_PTR kTrayId = 1;
 const GUID kTrayGuid = { 0x7e67d7a3, 0x09cc, 0x4cb2, { 0x9d, 0xb0, 0xd0, 0xec, 0xda, 0x8c, 0xc6, 0x3d } };
 constexpr UINT kTrayOpen = 1001;
@@ -109,7 +111,8 @@ bool g_hdrSupported = false;
 bool g_hdrEnabled = false;
 UINT32 g_activeDisplayCount = 0;
 bool g_vddAuto = false;
-DWORD g_vddLastAttemptTick = 0;
+DWORD g_vddNextAllowedTick = 0;
+bool g_vddWorkInProgress = false;
 struct PromptContext { std::wstring label; std::wstring value; HWND edit{}; bool accepted{}; bool multiline{}; bool password{}; };
 struct ChoiceContext { std::wstring label; std::vector<std::wstring> choices; HWND list{}; int selected{ -1 }; };
 WNDPROC g_choiceListOriginalProc{};
@@ -404,6 +407,28 @@ bool InstallVirtualDisplayDriver() {
     return RunElevatedWait(L"pnputil.exe", arguments.c_str());
 }
 
+// The worker reports one of these via kVddWorkMessage: 1 = enabled,
+// 2 = already ready, 3 = no driver found, 4 = enable failed.
+struct VddWork { HWND window; bool install; };
+
+DWORD WINAPI VddWorkThread(LPVOID param) {
+    auto* work = static_cast<VddWork*>(param);
+    int result = 0;
+    if (work->install) {
+        if (!InstallVirtualDisplayDriver()) result = 3;
+    }
+    if (result == 0) {
+        const int state = DetectVirtualDisplayState();
+        if (state == 1 && EnableVirtualDisplayDevices()) result = 1;
+        else if (state == 0) result = 2;
+        else if (state == 2) result = 3;
+        else result = 4;
+    }
+    PostMessageW(work->window, kVddWorkMessage, static_cast<WPARAM>(result), 0);
+    delete work;
+    return 0;
+}
+
 void RefreshVddAuto() {
     DWORD value{}, size = sizeof(value), type{};
     HKEY key{};
@@ -425,18 +450,21 @@ void SaveVddAuto() {
 // Called from the periodic refresh timer: enables the virtual display
 // automatically when the setting is on and no physical monitor is active.
 void AutoVirtualDisplayCheck() {
-    if (!g_vddAuto || g_activeDisplayCount != 0) return;
+    if (!g_vddAuto || g_activeDisplayCount != 0 || g_vddWorkInProgress) return;
     const DWORD now = GetTickCount();
-    if (g_vddLastAttemptTick != 0 && now - g_vddLastAttemptTick < 60000) return;
-    g_vddLastAttemptTick = now;
+    // Signed diff keeps the comparison correct across GetTickCount()'s
+    // 49.7-day wraparound; unsigned subtraction would turn a future deadline
+    // into a huge value and defeat the backoff entirely.
+    if (g_vddNextAllowedTick != 0 && static_cast<LONG>(now - g_vddNextAllowedTick) < 0) return;
+    g_vddNextAllowedTick = now + 60000;
     if (DetectVirtualDisplayState() != 1) return;
     if (EnableVirtualDisplayDevices()) {
         RefreshDisplayState();
         InvalidateRect(g_window, nullptr, FALSE);
         ShowToast(Tr(L"未检测到实体屏幕，已自动启用虚拟屏", L"No physical display detected; virtual display enabled"));
     } else {
-        // Failed attempts (missing admin rights, broken driver) back off longer.
-        g_vddLastAttemptTick = now + 540000;
+        // Failed attempts (missing admin rights, broken driver) back off ~10 min.
+        g_vddNextAllowedTick = now + 600000;
     }
 }
 
@@ -2059,6 +2087,17 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
             }
         }
         break;
+    case kVddWorkMessage:
+        g_vddWorkInProgress = false;
+        RefreshDisplayState();
+        InvalidateRect(hwnd, nullptr, FALSE);
+        switch (wparam) {
+        case 1: ShowToast(Tr(L"虚拟屏已启用", L"Virtual display enabled")); break;
+        case 2: ShowToast(Tr(L"虚拟屏驱动已就绪", L"The virtual display driver is already ready")); break;
+        case 3: ShowToast(Tr(L"未找到虚拟屏驱动，请将已签名 INF 放入 drivers 文件夹", L"No virtual display driver found; put a signed INF into the drivers folder")); break;
+        default: ShowToast(Tr(L"启用失败，请以管理员身份运行后重试", L"Enable failed; run as administrator and retry")); break;
+        }
+        return 0;
     case WM_TIMER:
         if (wparam == kRefreshTimer) {
             RefreshWifiStatus();
@@ -2321,25 +2360,30 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
             ShellExecuteW(hwnd, L"open", L"ms-settings:display", nullptr, nullptr, SW_SHOWNORMAL);
         } else if (g_detailsVisible && g_detailsKind == 5 && y >= 308 && y < 350 && g_hdrSupported) {
             ShowToast(SetHdrEnabled(!g_hdrEnabled) ? (g_hdrEnabled ? Tr(L"HDR 已启用", L"HDR enabled") : Tr(L"HDR 已关闭", L"HDR disabled")) : Tr(L"HDR 操作失败", L"HDR operation failed"));
-        } else if (g_detailsVisible && g_detailsKind == 5 && y >= 350 && y < 388 && g_activeDisplayCount == 0) {
-            int state = DetectVirtualDisplayState();
-            std::wstring infPath;
-            if (state == 2 && FindVirtualDriverInf(infPath)) {
-                ShowToast(Tr(L"正在安装虚拟屏驱动…", L"Installing the virtual display driver…"));
-                InstallVirtualDisplayDriver();
-                state = DetectVirtualDisplayState();
-            }
-            if (state == 1 && EnableVirtualDisplayDevices()) {
-                RefreshDisplayState();
-                ShowToast(Tr(L"虚拟屏已启用", L"Virtual display enabled"));
-            } else if (state == 0) {
-                ShowToast(Tr(L"虚拟屏驱动已就绪", L"The virtual display driver is already ready"));
-            } else if (state == 2) {
-                ShowToast(Tr(L"未找到虚拟屏驱动，请将已签名 INF 放入 drivers 文件夹", L"No virtual display driver found; put a signed INF into the drivers folder"));
-            } else {
+    } else if (g_detailsVisible && g_detailsKind == 5 && y >= 350 && y < 388 && g_activeDisplayCount == 0) {
+        // pnputil can block for minutes behind a UAC prompt, so install/enable
+        // runs on a worker thread; kVddWorkMessage reports the outcome.
+        const int state = DetectVirtualDisplayState();
+        std::wstring infPath;
+        if (state == 0) {
+            ShowToast(Tr(L"虚拟屏驱动已就绪", L"The virtual display driver is already ready"));
+        } else if (g_vddWorkInProgress) {
+            // Already running; its completion toast reports the outcome.
+        } else if (state == 2 && !FindVirtualDriverInf(infPath)) {
+            ShowToast(Tr(L"未找到虚拟屏驱动，请将已签名 INF 放入 drivers 文件夹", L"No virtual display driver found; put a signed INF into the drivers folder"));
+        } else {
+            g_vddWorkInProgress = true;
+            ShowToast(state == 2
+                ? Tr(L"正在安装虚拟屏驱动…", L"Installing the virtual display driver…")
+                : Tr(L"正在启用虚拟屏…", L"Enabling the virtual display…"));
+            auto* work = new VddWork{ hwnd, state == 2 };
+            if (CreateThread(nullptr, 0, VddWorkThread, work, 0, nullptr) == nullptr) {
+                g_vddWorkInProgress = false;
+                delete work;
                 ShowToast(Tr(L"启用失败，请以管理员身份运行后重试", L"Enable failed; run as administrator and retry"));
             }
-        } else if (g_detailsVisible && g_detailsKind == 5 && y >= 392 && y < 424) {
+        }
+    } else if (g_detailsVisible && g_detailsKind == 5 && y >= 392 && y < 424) {
             g_vddAuto = !g_vddAuto;
             SaveVddAuto();
             ShowToast(g_vddAuto
