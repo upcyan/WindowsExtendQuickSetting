@@ -2147,7 +2147,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
             g_toastAction.clear();
             InvalidateRect(hwnd, nullptr, FALSE);
         } else if (wparam == kActivateTimer && g_activateEvent && WaitForSingleObject(g_activateEvent, 0) == WAIT_OBJECT_0) {
-            ToggleWindow();
+            // Parity with WinUI3 activation: a second launch must surface the
+            // existing popup, never hide a visible one (D-001).
+            if (!IsWindowVisible(hwnd)) ToggleWindow();
+            else { SetForegroundWindow(hwnd); }
         }
         return 0;
     case WM_MOUSEMOVE: {
@@ -2245,6 +2248,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
                 const auto position = g_dohOffset + row;
                 if (position < filtered.size()) DeleteDohServer(hwnd, g_dohServers[filtered[position]]);
             }
+            ResizeNearTray();
             InvalidateRect(hwnd, nullptr, TRUE);
             return 0;
         }
