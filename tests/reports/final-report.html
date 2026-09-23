@@ -1,0 +1,132 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>WEQS Native 自动化回归测试 · 交接报告</title>
+<style>
+  :root{
+    --bg:#fafafa; --ink:#111; --ink2:#555; --ink3:#8a8a8a;
+    --hair:#e3e3e3; --accent:#1a6b5a; --accent2:#0f4c81; --bad:#a63d2f; --waived:#8a6d1f;
+    --mono:"Cascadia Code","Consolas",monospace;
+    --sans:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI",sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:var(--sans);background:var(--bg);color:var(--ink);font-size:15px;line-height:1.62}
+  .page{max-width:1060px;margin:0 auto;padding:56px 40px 90px}
+  .kicker{font-family:var(--mono);font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+  h1{font-size:34px;font-weight:600;letter-spacing:-.01em;margin:14px 0 10px;line-height:1.2}
+  .lede{color:var(--ink2);max-width:72ch}
+  .meta{display:flex;flex-wrap:wrap;gap:8px 30px;margin:26px 0 0;font-family:var(--mono);font-size:11.5px;color:var(--ink3);letter-spacing:.03em}
+  .meta b{color:var(--ink2);font-weight:500}
+  hr{border:0;border-top:1px solid var(--hair);margin:34px 0}
+  h2{font-size:19px;font-weight:600;margin:0 0 14px;letter-spacing:-.005em}
+  h2 .no{font-family:var(--mono);font-size:12px;color:var(--accent);margin-right:10px;letter-spacing:.08em}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin:12px 0}
+  th{text-align:left;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);font-weight:500;padding:8px 10px;border-bottom:1px solid var(--ink)}
+  td{padding:8px 10px;border-bottom:1px solid var(--hair);vertical-align:top}
+  .metrics{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--hair);margin:18px 0 6px}
+  .m{padding:20px 22px;border-right:1px solid var(--hair)}
+  .m:last-child{border-right:0}
+  .m .v{font-size:30px;font-weight:600;letter-spacing:-.02em;line-height:1.1}
+  .m .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-top:6px}
+  .v.good{color:var(--accent)} .v.bad{color:var(--bad)}
+  .tag{display:inline-block;font-family:var(--mono);font-size:10.5px;padding:1px 8px;border:1px solid var(--hair);border-radius:2px;letter-spacing:.04em}
+  .tag.p{color:var(--accent);border-color:var(--accent)}
+  .tag.f{color:var(--waived);border-color:var(--waived)}
+  .tag.d{color:var(--bad);border-color:var(--bad)}
+  .note{font-size:13px;color:var(--ink2);max-width:76ch}
+  .note b{color:var(--ink)}
+  code{font-family:var(--mono);font-size:.9em;background:#f0f0ee;padding:1px 5px;border-radius:2px}
+  .codeblock{font-family:var(--mono);font-size:12.5px;line-height:1.65;background:#f4f4f2;border:1px solid var(--hair);padding:14px 18px;margin:12px 0;white-space:pre;overflow-x:auto;color:#222}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:28px}
+  ul.tight{list-style:none}
+  ul.tight li{padding:5px 0 5px 20px;position:relative;border-bottom:1px solid var(--hair);font-size:13.5px}
+  ul.tight li::before{content:"";position:absolute;left:2px;top:13px;width:9px;height:1px;background:var(--accent)}
+  .foot{margin-top:44px;padding-top:16px;border-top:1px solid var(--hair);font-family:var(--mono);font-size:11px;color:var(--ink3);letter-spacing:.04em;line-height:1.9}
+  @media(max-width:760px){.metrics{grid-template-columns:repeat(2,1fr)}.cols{grid-template-columns:1fr}.page{padding:32px 20px}}
+</style>
+</head>
+<body>
+<div class="page">
+
+<div class="kicker">Regression Report · 交接报告</div>
+<h1>WindowsExtendQuickSetting Native 自动化回归测试</h1>
+<p class="lede">以 <code>native\PARITY_AUDIT.md</code> 为验收基线, 对 Win32/C++ 主线执行 23 条功能与界面用例; 本轮修复 2 个产品缺陷(D-001 激活语义、D-003 DoH 返回高度), 建立消息级点击的可复跑测试套件, 并完成虚拟屏(IddCx)集成验收。</p>
+<div class="meta">
+  <span>DATE <b>2026-09-23</b></span>
+  <span>EXE <b>v1.2.15.0</b></span>
+  <span>OS <b>Windows 10.0.28000 x64</b></span>
+  <span>SCREEN <b>2560×1440 @96dpi</b></span>
+  <span>SUITE <b>tests\run-tests.ps1</b></span>
+</div>
+
+<hr>
+
+<div class="metrics">
+  <div class="m"><div class="v good">21/23</div><div class="k">通过率</div></div>
+  <div class="m"><div class="v">9</div><div class="k">覆盖组</div></div>
+  <div class="m"><div class="v good">2</div><div class="k">产品缺陷修复</div></div>
+  <div class="m"><div class="v bad">0</div><div class="k">回归引入失败</div></div>
+</div>
+<p class="note">未通过的 2 条(F16/F17)为<b>环境受限项</b>而非产品缺陷: 第三方置顶弹窗(网易云音乐每日推荐 / ToDesk 悬浮球)在失败瞬间截图 <code>13-f16-before-assert.png</code> 中可见, 且消息级点击后 F01–F15、F18–F22、U01 全部稳定通过。详见缺陷台账 <code>tests\DEFECTS.md</code> D-006。</p>
+
+<hr>
+
+<h2><span class="no">01</span>覆盖矩阵(最终轮 20260923-083332)</h2>
+<table>
+  <tr><th>组</th><th>覆盖内容</th><th>用例</th><th>通过</th></tr>
+  <tr><td>launch</td><td>主窗体创建、自动弹出、单实例互斥与激活</td><td>3</td><td>3</td></tr>
+  <tr><td>home</td><td>窗口宽度 368 / 高度 570↔660 / 任务栏工作区定位</td><td>3</td><td>3</td></tr>
+  <tr><td>details</td><td>以太网·显示·蓝牙(含扫描)·USB 四个详情页开合</td><td>4</td><td>4</td></tr>
+  <tr><td>settings</td><td>齿轮入口、跳转网络优先级、自启动注册表只读核对</td><td>3</td><td>3</td></tr>
+  <tr><td>doh</td><td>DoH 页入口、选择器打开/筛选/Esc、搜索 Prompt(环境受限)</td><td>3</td><td>2</td></tr>
+  <tr><td>language</td><td>语言切换 HKCU 持久化(环境受限, 同 D-006)</td><td>1</td><td>0</td></tr>
+  <tr><td>hide / reactivate</td><td>Esc 隐藏、二次启动再弹出、3s 刷新稳定性</td><td>3</td><td>3</td></tr>
+  <tr><td>visual</td><td>启用快捷卡主题色像素抽查 RGB(0,103,192)</td><td>1</td><td>1</td></tr>
+  <tr><td>exit</td><td>托盘退出命令、互斥体与窗口清理</td><td>2</td><td>2</td></tr>
+</table>
+
+<hr>
+
+<h2><span class="no">02</span>缺陷台账摘要</h2>
+<table>
+  <tr><th>ID</th><th>级别</th><th>现象</th><th>根因</th><th>处置 / 提交</th></tr>
+  <tr><td>D-001</td><td><span class="tag p">FIXED</span></td><td>二次启动隐藏已可见弹窗(基线应为"激活即显示")</td><td>kActivateTimer 用 ToggleWindow 切换语义</td><td>仅不可见时显示, 可见时前置前台 · <code>e16737b</code></td></tr>
+  <tr><td>D-003</td><td><span class="tag p">FIXED</span></td><td>DoH 页返回主页后窗口残留 650px 高、底部空白 80px</td><td>DoH 分支返回路径缺 ResizeNearTray()</td><td>补齐调用(与 Settings 分支对齐) · <code>e16737b</code></td></tr>
+  <tr><td>D-006</td><td><span class="tag f">WAIVED</span></td><td>真实鼠标点击被第三方置顶弹窗吞掉, 用例随机失败</td><td>桌面污染, 非产品缺陷</td><td>点击改为消息级 PostMessage; F16/F17 挂起 · <code>719fe89</code></td></tr>
+  <tr><td>D-002</td><td><span class="tag d">OPEN</span></td><td>USB/以太网/蓝牙/显示卡右半区再点不收起详情(仅 Wi-Fi 有 toggle)</td><td>交互设计歧义, 待与 WinUI3 对齐</td><td>记录在案, 不阻塞</td></tr>
+</table>
+<p class="note">修复闭环: 每个修复对应失败用例转通过(D-001→F03 加强断言; D-003→pm-probe 实测 650→570), 且修复后完整重跑无新增失败(回归对照 20260922-173405 vs 20260923-083332)。回滚方式: <code>git revert e16737b</code> 后重建重跑。</p>
+
+<hr>
+
+<h2><span class="no">03</span>虚拟屏 (IddCx) 集成验收</h2>
+<div class="cols">
+  <div>
+    <ul class="tight">
+      <li><b>预集成:</b> exe 旁 <code>drivers\*.inf</code> → pnputil 提权静默安装(后台线程, 不阻塞 UI)</li>
+      <li><b>调用已装驱动:</b> SetupAPI 按关键词探测(virtual/indirect/idd/parsec/todesk/spacedesk…), 三态: 运行中/已禁用/未安装</li>
+      <li><b>本机实测:</b> 检出 ToDesk + Parsec 两个运行中适配器; 禁用→启用闭环 OK→Error→OK</li>
+      <li><b>无屏自动启用:</b> VddAutoEnable 已开启, 60s 退避 + 失败 10min 退避</li>
+    </ul>
+  </div>
+  <div>
+    <p class="note"><b>遗留:</b> "拔掉全部显示器→自动弹出虚拟屏"的端到端场景需无显示器环境; 检测/启用/退避各环节已单点验证。<br><br>验收详情: <code>tests\reports\vdd-integration-acceptance.md</code></p>
+  </div>
+</div>
+
+<hr>
+
+<h2><span class="no">04</span>一键复跑</h2>
+<div class="codeblock">powershell -ExecutionPolicy Bypass -File .\native\build-release.ps1   <span style="color:#8a8a8a"># 构建(可选)</span>
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\run-tests.ps1   <span style="color:#8a8a8a"># 全量回归</span></div>
+<p class="note">套件自动停止/恢复所有 WEQS 实例(共享单实例互斥体); 产物写入 <code>tests\reports\&lt;timestamp&gt;\</code>(junit.xml + report.md + env.json + screenshots)。交接细节、修改指南与遗留风险见 <code>tests\HANDOFF.md</code>。</p>
+
+<div class="foot">
+  WEQS NATIVE REGRESSION · SUITE COMMIT 865575f→719fe89 · FIX e16737b<br>
+  GENERATED BY AUTOMATED SUITE · ALL EVIDENCE UNDER tests\reports\ · AutoClaw
+</div>
+
+</div>
+</body>
+</html>
