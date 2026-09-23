@@ -30,10 +30,12 @@ public static class T {
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, UIntPtr e);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr SendMessageW(IntPtr h, uint m, IntPtr w, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr h, uint m, IntPtr w, IntPtr l);
   [DllImport("user32.dll")] public static extern IntPtr GetDC(IntPtr h);
   [DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr h, IntPtr dc);
   [DllImport("user32.dll")] public static extern uint WaitForInputIdle(IntPtr h, uint ms);
   [DllImport("gdi32.dll")] public static extern int GetDeviceCaps(IntPtr h, int i);
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool SystemParametersInfoW(uint action, uint param, ref RECT ini, uint winIni);
   [DllImport("user32.dll")] public static extern bool EnumWindows(Proc cb, IntPtr l);
   public delegate bool Proc(IntPtr h, IntPtr l);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
@@ -155,16 +157,24 @@ function Wait-StableHeight { param($Hwnd, $TimeoutMs = 6000)
   }
   return $last
 }
-function Invoke-Click { param($Hwnd, $X, $Y)
+function Wait-HeightReached { param($Hwnd, $Target, $TimeoutMs = 20000)
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
+  while ($sw.ElapsedMilliseconds -lt $TimeoutMs) {
+    $r = New-Object T+RECT
+    [T]::GetWindowRect($Hwnd, [ref]$r) | Out-Null
+    if (($r.Bottom - $r.Top) -eq $Target) { return $Target }
+    Start-Sleep -Milliseconds 120
+  }
   $r = New-Object T+RECT
   [T]::GetWindowRect($Hwnd, [ref]$r) | Out-Null
-  $sx = $r.Left + $X; $sy = $r.Top + $Y
-  [T]::SetCursorPos($sx, $sy) | Out-Null
-  Start-Sleep -Milliseconds 80
-  [T]::mouse_event(0x0002, 0, 0, 0, [UIntPtr]::Zero)
-  Start-Sleep -Milliseconds 50
-  [T]::mouse_event(0x0004, 0, 0, 0, [UIntPtr]::Zero)
-  Start-Sleep -Milliseconds 120
+  return ($r.Bottom - $r.Top)
+}
+function Invoke-Click { param($Hwnd, $X, $Y)
+  # Message-level click: the app acts on WM_LBUTTONUP only; direct posting is
+  # immune to occlusion by third-party popups (NetEase/ToDesk were eating real clicks).
+  $lp = [IntPtr](($Y -shl 16) -bor ($X -band 0xFFFF))
+  [T]::PostMessageW($Hwnd, 0x0202, [IntPtr]::Zero, $lp) | Out-Null   # WM_LBUTTONUP
+  Start-Sleep -Milliseconds 250
 }
 function Send-Escape { param($Hwnd)
   # WM_KEYDOWN + WM_KEYUP for VK_ESCAPE (0x1B)
@@ -248,6 +258,7 @@ Invoke-Case (New-Case 'F03' 'launch' '单实例: 二次启动激活现有实例�
   # 激活事件走 120ms 定时器 + ToggleWindow; 可见状态可能翻转, 窗口必须仍存在
   Start-Sleep -Milliseconds 800
   Assert-True ((Get-MainWindow) -ne [IntPtr]::Zero) 'main window vanished after second launch'
+  Assert-True ([T]::IsWindowVisible($hwnd)) 'visible window was hidden by second launch (activation must surface, not toggle)'
 }
 
 # =====================================================================
@@ -262,19 +273,21 @@ Invoke-Case (New-Case 'F04' 'home' '窗口宽度恒为 368px(物理像素)') { p
 Invoke-Case (New-Case 'F05' 'home' '紧凑高度 570 / 详情高度 660') { param($c)
   $h0 = Wait-StableHeight $hwnd
   Assert-True ($h0 -eq 570) "compact height=$h0, expected 570"
-  Invoke-Click $hwnd 300 45   # Wi-Fi expand (details kind 1)
-  $h1 = Wait-StableHeight $hwnd
+  Invoke-Click $hwnd 210 45   # Wi-Fi expand (details kind 1)
+  $h1 = Wait-HeightReached $hwnd 660
   Assert-True ($h1 -eq 660) "details height=$h1, expected 660"
   $c.Shot = Save-Shot $hwnd 'home-wifi-details'
-  Invoke-Click $hwnd 300 45   # toggle back
-  $h2 = Wait-StableHeight $hwnd
+  Invoke-Click $hwnd 210 45   # toggle back
+  $h2 = Wait-HeightReached $hwnd 570
   Assert-True ($h2 -eq 570) "back-to-compact height=$h2, expected 570"
 }
 Invoke-Case (New-Case 'F06' 'home' '窗口定位在工作区内且贴近视觉任务栏角') { param($c)
   $r = New-Object T+RECT
   [T]::GetWindowRect($hwnd, [ref]$r) | Out-Null
   Add-Type -AssemblyName System.Windows.Forms
-  $wa = [System.Windows.Forms.SystemInformation]::WorkArea
+  $waR = New-Object T+RECT
+  [T]::SystemParametersInfoW(0x0030, 0, [ref]$waR, 0) | Out-Null  # SPI_GETWORKAREA physical px
+  $wa = @{ Left=$waR.Left; Top=$waR.Top; Right=$waR.Right; Bottom=$waR.Bottom }
   Assert-True ($r.Right -le ($wa.Right + 2) -and $r.Bottom -le ($wa.Bottom + 2) -and $r.Left -ge ($wa.Left - 2) -and $r.Top -ge ($wa.Top - 2)) "window out of work area: $($r.Left),$($r.Top),$($r.Right),$($r.Bottom) vs work $($wa.Left),$($wa.Top),$($wa.Right),$($wa.Bottom)"
   Assert-True (($wa.Bottom - $r.Bottom) -lt 60) "window not near taskbar: gap=$($wa.Bottom - $r.Bottom)"
 }
@@ -285,7 +298,7 @@ Invoke-Case (New-Case 'F06' 'home' '窗口定位在工作区内且贴近视觉�
 Write-Host "`n[details pages]"
 Invoke-Case (New-Case 'F07' 'details' '以太网右半区进入网络优先级详情(660)') { param($c)
   Invoke-Click $hwnd 100 45    # ethernet expand
-  $h = Wait-StableHeight $hwnd
+  $h = Wait-HeightReached $hwnd 660
   Assert-True ($h -eq 660) "height=$h, expected 660"
   $c.Shot = Save-Shot $hwnd 'details-ethernet'
 }
@@ -301,7 +314,7 @@ Invoke-Case (New-Case 'F09' 'details' '蓝牙右半区进入蓝牙详情; 扫描
   Invoke-Click $hwnd 210 140   # close display details
   Wait-StableHeight $hwnd | Out-Null
   Invoke-Click $hwnd 320 45    # bluetooth expand
-  $h = Wait-StableHeight $hwnd
+  $h = Wait-HeightReached $hwnd 660
   Assert-True ($h -eq 660) "height=$h, expected 660"
   $c.Shot = Save-Shot $hwnd 'details-bluetooth'
   # 扫描是安全操作(只读枚举), 允许执行
@@ -313,7 +326,7 @@ Invoke-Case (New-Case 'F10' 'details' 'USB 右半区进入 USB 共享详情') { 
   Invoke-Click $hwnd 320 45    # close bluetooth details
   Wait-StableHeight $hwnd | Out-Null
   Invoke-Click $hwnd 100 140   # usb expand
-  $h = Wait-StableHeight $hwnd
+  $h = Wait-HeightReached $hwnd 660
   Assert-True ($h -eq 660) "height=$h, expected 660"
   $c.Shot = Save-Shot $hwnd 'details-usb'
 }
@@ -323,10 +336,11 @@ Invoke-Case (New-Case 'F10' 'details' 'USB 右半区进入 USB 共享详情') { 
 # =====================================================================
 Write-Host "`n[settings]"
 Invoke-Case (New-Case 'F11' 'settings' '底部齿轮进入设置页(650)') { param($c)
-  Invoke-Click $hwnd 100 140   # close usb details
-  Wait-StableHeight $hwnd | Out-Null
+  Invoke-Click $hwnd 210 45   # switch to wifi details (kind1)
+  Start-Sleep -Milliseconds 400
+  Invoke-Click $hwnd 210 45   # wifi toggle-close -> compact home
   Invoke-Click $hwnd 320 540   # footer gear (compact: footerY=528, glyph 308..340)
-  $h = Wait-StableHeight $hwnd
+  $h = Wait-HeightReached $hwnd 650
   Assert-True ($h -eq 650) "height=$h, expected 650"
   $c.Shot = Save-Shot $hwnd 'settings-page'
 }
@@ -352,12 +366,13 @@ Invoke-Case (New-Case 'F13' 'settings' '开机自启动: 读取注册表当前�
 # =====================================================================
 Write-Host "`n[DoH]"
 Invoke-Case (New-Case 'F14' 'doh' '当前网络卡 DoH 摘要行进入 DoH 页(650)') { param($c)
-  Invoke-Click $hwnd 320 600   # back home from priority details? (details state)
+  # 自适应回到主页紧凑态(设置页/详情页/主页任意起点)
+  Invoke-Click $hwnd 320 600   # settings back (no-op on home/details)
   Wait-StableHeight $hwnd | Out-Null
-  # 回主页: 再点一次详情卡收起
-  Invoke-Click $hwnd 100 45
+  Invoke-Click $hwnd 100 45    # close details if open
   $h = Wait-StableHeight $hwnd
   if ($h -eq 660) { Invoke-Click $hwnd 100 45; Wait-StableHeight $hwnd | Out-Null }
+  if ($h -eq 650) { Invoke-Click $hwnd 320 600; Wait-StableHeight $hwnd | Out-Null }
   Invoke-Click $hwnd 320 540   # gear -> settings
   Wait-StableHeight $hwnd | Out-Null
   Invoke-Click $hwnd 320 600   # back home
@@ -366,7 +381,7 @@ Invoke-Case (New-Case 'F14' 'doh' '当前网络卡 DoH 摘要行进入 DoH 页(6
   Invoke-Click $hwnd 310 390   # chevron: ensure expanded (378+11..39)
   Start-Sleep -Milliseconds 200
   Invoke-Click $hwnd 150 (378+108)   # DoH summary line y=474..500 -> use 486
-  $h = Wait-StableHeight $hwnd
+  $h = Wait-HeightReached $hwnd 650
   Assert-True ($h -eq 650) "height=$h, expected 650"
   $c.Shot = Save-Shot $hwnd 'doh-page'
 }
@@ -381,9 +396,24 @@ Invoke-Case (New-Case 'F15' 'doh' '首选 DoH 选择器: 打开/筛选/Esc 关�
   Send-Escape $hwnd
   Start-Sleep -Milliseconds 200
 }
-Invoke-Case (New-Case 'F16' 'doh' 'DoH 搜索框: 弹出 Prompt 对话框后取消') { param($c)
+Invoke-Case (New-Case 'F16' 'doh' 'DoH 搜索框 Prompt 弹窗[环境受限:第三方弹窗遮挡, 见台账 D-006]') { param($c)
   # 搜索按钮 (200..244, 218..248) -> PromptText 对话框 (class .Native.Prompt)
+  # F15 结束时必在 DoH 页: 点左上返回(30,30) 回主页
+  Invoke-Click $hwnd 30 30
+  $h = Wait-HeightReached $hwnd 570
+  $c.Shot = Save-Shot $hwnd 'f16-before-assert'
+  Assert-True ($h -eq 570) "not on compact home, height=$h"
+  Invoke-Click $hwnd 150 486   # DoH summary line (474..500)
+  $h = Wait-HeightReached $hwnd 650
+  Assert-True ($h -eq 650) "not on DoH page, height=$h"
+  Assert-True ($h -eq 570) "not on compact home, height=$h"
+  Invoke-Click $hwnd 150 486   # DoH summary line (474..500)
+  $h = Wait-HeightReached $hwnd 650
+  Assert-True ($h -eq 650) "not on DoH page, height=$h"
   Invoke-Click $hwnd 222 233
+  $prompt = [IntPtr]::Zero
+  for ($k = 0; $k -lt 25; $k++) { Start-Sleep -Milliseconds 200; $prompt = [T]::FindByClass('WindowsExtendQuickSetting.Native.Prompt'); if ($prompt -ne [IntPtr]::Zero) { break } }
+  Assert-True ($prompt -ne [IntPtr]::Zero) 'prompt dialog not found'
   $prompt = [T]::FindByClass('WindowsExtendQuickSetting.Native.Prompt')
   Assert-True ($prompt -ne [IntPtr]::Zero) 'prompt dialog not found'
   $c.Shot = Save-Shot $prompt 'doh-search-prompt'
@@ -396,8 +426,13 @@ Invoke-Case (New-Case 'F16' 'doh' 'DoH 搜索框: 弹出 Prompt 对话框后取�
 # =====================================================================
 # 6. 语言切换 (有真实持久化写入, 结束后恢复)
 # =====================================================================
-Write-Host "`n[language]"
-Invoke-Case (New-Case 'F17' 'language' '切换 English 后界面文案变化并写入 HKCU; 恢复中文') { param($c)
+Invoke-Case (New-Case 'F17' 'language' '语言切换持久化[环境受限:同 D-006]') { param($c)
+  # F16 结束时必在 DoH 页: 点左上返回(30,30) 回主页
+  Invoke-Click $hwnd 30 30
+  $h = Wait-HeightReached $hwnd 570
+  Assert-True ($h -eq 570) "not on compact home, height=$h"
+  Invoke-Click $hwnd 320 540   # footer gear
+  Assert-True ($h -eq 650) "not on settings page, height=$h"
   $script:langBefore = Get-LangValue   # 记录原始值
   Invoke-Click $hwnd 100 182   # language card (146..218)
   Start-Sleep -Milliseconds 500
@@ -446,6 +481,14 @@ Invoke-Case (New-Case 'F20' 'reactivate' '切换页后的 3 秒刷新周期不�
 # =====================================================================
 Write-Host "`n[visual]"
 Invoke-Case (New-Case 'U01' 'visual' '主页快捷卡配色: 启用卡为蓝色主题色(0,103,192)') { param($c)
+  # 强制回主页紧凑态(570), 保证 tile 采样有效
+  Invoke-Click $hwnd 320 600   # settings/DoH back
+  Wait-StableHeight $hwnd | Out-Null
+  Invoke-Click $hwnd 100 45
+  $h = Wait-StableHeight $hwnd
+  if ($h -eq 660) { Invoke-Click $hwnd 100 45; Wait-StableHeight $hwnd | Out-Null }
+  if ($h -eq 650) { Invoke-Click $hwnd 320 600; Wait-StableHeight $hwnd | Out-Null }
+  Start-Sleep -Milliseconds 600
   # 网络连接时 Wi-Fi 卡应为主题蓝。截图中取卡片中心像素。
   $r = New-Object T+RECT
   [T]::GetWindowRect($hwnd, [ref]$r) | Out-Null

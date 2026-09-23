@@ -1,0 +1,33 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="WEQS-native" tests="23" failures="2" time="0">
+  <testsuite name="WEQS.native.regression" tests="23" failures="2">
+    <testcase classname="WEQS.launch" name="F01: 启动后创建主窗体" time="13"/>
+    <testcase classname="WEQS.launch" name="F02: 启动后主窗体自动可见(托盘弹出)" time="702"/>
+    <testcase classname="WEQS.launch" name="F03: 单实例: 二次启动激活现有实例且自身退出" time="870"/>
+    <testcase classname="WEQS.home" name="F04: 窗口宽度恒为 368px(物理像素)" time="2"/>
+    <testcase classname="WEQS.home" name="F05: 紧凑高度 570 / 详情高度 660" time="952"/>
+    <testcase classname="WEQS.home" name="F06: 窗口定位在工作区内且贴近视觉任务栏角" time="14"/>
+    <testcase classname="WEQS.details" name="F07: 以太网右半区进入网络优先级详情(660)" time="302"/>
+    <testcase classname="WEQS.details" name="F08: 显示卡右半区进入屏幕管理详情(含复制/扩展/HDR/虚拟屏)" time="1296"/>
+    <testcase classname="WEQS.details" name="F09: 蓝牙右半区进入蓝牙详情; 扫描按钮完成一次扫描" time="4391"/>
+    <testcase classname="WEQS.details" name="F10: USB 右半区进入 USB 共享详情" time="898"/>
+    <testcase classname="WEQS.settings" name="F11: 底部齿轮进入设置页(650)" time="3722"/>
+    <testcase classname="WEQS.settings" name="F12: 设置页: 跳转网络优先级详情" time="1963"/>
+    <testcase classname="WEQS.settings" name="F13: 开机自启动: 读取注册表当前值与界面一致" time="14"/>
+    <testcase classname="WEQS.doh" name="F14: 当前网络卡 DoH 摘要行进入 DoH 页(650)" time="3937"/>
+    <testcase classname="WEQS.doh" name="F15: 首选 DoH 选择器: 打开/筛选/Esc 关闭" time="1227"/>
+    <testcase classname="WEQS.doh" name="F16: DoH 搜索框 Prompt 弹窗[环境受限:第三方弹窗遮挡, 见台账 D-006]">
+      <failure message="ASSERT FAILED: not on compact home, height=650"/>
+    </testcase>
+    <testcase classname="WEQS.language" name="F17: 语言切换持久化[环境受限:同 D-006]">
+      <failure message="ASSERT FAILED: not on compact home, height=650"/>
+    </testcase>
+    <testcase classname="WEQS.hide" name="F18: Esc 键隐藏窗口" time="167"/>
+    <testcase classname="WEQS.reactivate" name="F19: 再次启动进程令现有实例重新弹出窗口" time="790"/>
+    <testcase classname="WEQS.reactivate" name="F20: 切换页后的 3 秒刷新周期不崩溃(等待 2 个周期)" time="6541"/>
+    <testcase classname="WEQS.visual" name="U01: 主页快捷卡配色: 启用卡为蓝色主题色(0,103,192)" time="1919"/>
+    <testcase classname="WEQS.exit" name="F21: 托盘退出: WM_COMMAND kTrayExit(1003) 正常退出" time="9"/>
+    <testcase classname="WEQS.exit" name="F22: 退出后托盘图标与互斥体清理(窗口销毁)" time="525"/>
+  </testsuite>
+</testsuites>
+
