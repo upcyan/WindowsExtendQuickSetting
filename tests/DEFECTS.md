@@ -25,3 +25,18 @@
 1. 真实"无物理屏→自动启用虚拟屏"端到端场景需无显示器环境(见 vdd-integration-acceptance.md 遗留节)。
 2. F16/F17 的页面身份判定依赖窗口高度, 650 同时是 DoH 与设置页高度; 后续可加标题区像素判定消除歧义。
 3. 多显示器/DPI 缩放/侧边任务栏窗口定位(PARITY_AUDIT 未验证项)未在本轮覆盖。
+## D-007 (2026-09-24): 适配器启动 ≠ 虚拟屏已开启
+
+| 项 | 内容 |
+|---|---|
+| 严重级 | 高(功能语义错误) |
+| 现象 | ToDesk/Parsec 在设备管理器中"已启动", 但虚拟显示器从未创建; 旧判定把适配器启动当成"已开启", 无屏自动启用从未生效 |
+| 根因 | IddCx 模型中适配器(Display 类)与显示器(Monitor 类)是两层; ToDesk/Parsec 的显示器由各自宿主程序按需创建, 驱动装好不会自动出现 |
+| 修复 | 判定改为: installed=Display 类有虚拟适配器; active=Monitor 类有 OK 的虚拟监视器(DN_STARTED 且 problem==0)。启用动作后重新检测, 仅在虚拟监视器真出现时报告成功 |
+| 提交 | b1af9f7 (native + WinUI3 同步) |
+| 验证 | 安装 Virtual-Display-Driver(MttVDD, MIT)后 Monitor 类出现 OK 的 "Generic Monitor (VDD by MTT)", 活动路径 1→2; 弹窗按钮渲染正常 |
+
+### 推荐的虚拟屏驱动
+**Virtual-Display-Driver (MttVDD)** — https://github.com/VirtualDrivers/Virtual-Display-Driver (MIT)
+设备启动即按 vdd_settings.xml 自动创建显示器(monitors count 可调), 无需宿主程序, 是"装好即用/断物理屏自动在"场景的正确选择。
+安装: 把仓库 Releases 的 VDD.Control 包内 SignedDrivers\x64(目录名为 x86 但实际是 amd64 INF)\VDD\ 三件套(MttVDD.inf/.dll/.cat + vdd_settings.xml)放入 drivers 文件夹即可, 产品会在用户点击启用时通过 pnputil 安装。
