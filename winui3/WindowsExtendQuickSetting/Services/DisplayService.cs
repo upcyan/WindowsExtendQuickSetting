@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
 
@@ -75,8 +75,11 @@ public static class DisplayService
     public static VirtualDriverState GetVirtualDriverState()
     {
         try
-        {
-            var script = "$d=@(Get-PnpDevice | Where-Object { ($_.Class -eq 'Display' -or $_.Class -eq 'Monitor') -and $_.FriendlyName -match '" + VirtualDriverMatch + "' }); if($d.Count -eq 0){exit 2}; if(@($d | Where-Object Status -eq 'OK').Count -gt 0){exit 0}else{exit 1}";
+            // D-007: Display-class adapters (ToDesk/Parsec) can be OK while no virtual
+            // monitor exists - they create it only from their host app. "Ready" must
+            // mean an OK Monitor-class virtual child; "Disabled" = adapters present
+            // but no active virtual monitor.
+            var script = "$a=@(Get-PnpDevice | Where-Object { $_.Class -eq 'Display' -and $_.FriendlyName -match '" + VirtualDriverMatch + "' }); $m=@(Get-PnpDevice | Where-Object { $_.Class -eq 'Monitor' -and $_.Status -eq 'OK' -and $_.FriendlyName -match '" + VirtualDriverMatch + "' }); if($a.Count -eq 0 -and $m.Count -eq 0){exit 2}; if($m.Count -gt 0){exit 0}else{exit 1}";
             using var process = Process.Start(new ProcessStartInfo
             {
                 FileName = "powershell.exe", Arguments = $"-NoProfile -NonInteractive -Command \"{script}\"",

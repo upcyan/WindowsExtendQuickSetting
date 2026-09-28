@@ -1,4 +1,4 @@
-#define NOMINMAX
+﻿#define NOMINMAX
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
@@ -334,29 +334,52 @@ bool FindVirtualDriverInf(std::wstring& infPath) {
     }
     return false;
 }
-
-// 0 = at least one virtual display device running, 1 = present but disabled,
 // 2 = no virtual display device installed.
+// 0 = a virtual MONITOR is active on the desktop, 1 = adapters installed but
+// no virtual monitor active, 2 = no virtual display software installed.
+//
+// D-007: an IddCx *adapter* (Display class, ToDesk/Parsec) starting up does
+// NOT mean a virtual *monitor* exists - ToDesk/Parsec create their monitor
+// only when their host app asks for it. So "installed" must be judged from
+// Display-class adapters while "active" must be judged from an OK Monitor-
+// class child (e.g. "Generic Monitor (VDD by MTT)", "ParsecVDA").
 int DetectVirtualDisplayState() {
-    const GUID classes[] = { GUID_DEVCLASS_DISPLAY, GUID_DEVCLASS_MONITOR };
-    bool any = false, ready = false;
-    for (const auto& cls : classes) {
-        const HDEVINFO set = SetupDiGetClassDevsW(&cls, nullptr, nullptr, DIGCF_PRESENT);
-        if (set == INVALID_HANDLE_VALUE) continue;
+    const GUID displayClass = GUID_DEVCLASS_DISPLAY;
+    const GUID monitorClass = GUID_DEVCLASS_MONITOR;
+    bool installed = false, monitorActive = false;
+
+    const HDEVINFO displays = SetupDiGetClassDevsW(&displayClass, nullptr, nullptr, DIGCF_PRESENT);
+    if (displays != INVALID_HANDLE_VALUE) {
         SP_DEVINFO_DATA data{ sizeof(data) };
-        for (DWORD index = 0; SetupDiEnumDeviceInfo(set, index, &data); ++index) {
+        for (DWORD index = 0; SetupDiEnumDeviceInfo(displays, index, &data); ++index) {
             wchar_t name[256]{};
             DWORD required{};
-            if (!SetupDiGetDeviceRegistryPropertyW(set, &data, SPDRP_FRIENDLYNAME, nullptr,
+            if (!SetupDiGetDeviceRegistryPropertyW(displays, &data, SPDRP_FRIENDLYNAME, nullptr,
+                reinterpret_cast<PBYTE>(name), sizeof(name), &required)) continue;
+            if (IsVirtualDisplayName(name)) { installed = true; break; }
+        }
+        SetupDiDestroyDeviceInfoList(displays);
+    }
+
+    const HDEVINFO monitors = SetupDiGetClassDevsW(&monitorClass, nullptr, nullptr, DIGCF_PRESENT);
+    if (monitors != INVALID_HANDLE_VALUE) {
+        SP_DEVINFO_DATA data{ sizeof(data) };
+        for (DWORD index = 0; SetupDiEnumDeviceInfo(monitors, index, &data); ++index) {
+            wchar_t name[256]{};
+            DWORD required{};
+            if (!SetupDiGetDeviceRegistryPropertyW(monitors, &data, SPDRP_FRIENDLYNAME, nullptr,
                 reinterpret_cast<PBYTE>(name), sizeof(name), &required)) continue;
             if (!IsVirtualDisplayName(name)) continue;
-            any = true;
             ULONG status{}, problem{};
-            if (CM_Get_DevNode_Status(&status, &problem, data.DevInst, 0) == CR_SUCCESS && (status & DN_STARTED)) ready = true;
+            if (CM_Get_DevNode_Status(&status, &problem, data.DevInst, 0) == CR_SUCCESS &&
+                (status & DN_STARTED) && problem == 0) {
+                monitorActive = true;
+                break;
+            }
         }
-        SetupDiDestroyDeviceInfoList(set);
+        SetupDiDestroyDeviceInfoList(monitors);
     }
-    return !any ? 2 : (ready ? 0 : 1);
+    return !installed ? 2 : (monitorActive ? 0 : 1);
 }
 
 bool EnableVirtualDisplayDevices() {
@@ -419,7 +442,12 @@ DWORD WINAPI VddWorkThread(LPVOID param) {
     }
     if (result == 0) {
         const int state = DetectVirtualDisplayState();
-        if (state == 1 && EnableVirtualDisplayDevices()) result = 1;
+        if (state == 1 && EnableVirtualDisplayDevices()) {
+            // D-007: enabling a disabled adapter does not necessarily create
+            // the monitor (ToDesk/Parsec create it on demand). Re-detect and
+            // only report success when a virtual monitor is really active.
+            result = (DetectVirtualDisplayState() == 0) ? 1 : 4;
+        }
         else if (state == 0) result = 2;
         else if (state == 2) result = 3;
         else result = 4;
@@ -458,12 +486,15 @@ void AutoVirtualDisplayCheck() {
     if (g_vddNextAllowedTick != 0 && static_cast<LONG>(now - g_vddNextAllowedTick) < 0) return;
     g_vddNextAllowedTick = now + 60000;
     if (DetectVirtualDisplayState() != 1) return;
-    if (EnableVirtualDisplayDevices()) {
+    EnableVirtualDisplayDevices();
+    // D-007: only celebrate when a virtual monitor is really on the desktop;
+    // ToDesk/Parsec adapters may still need their host app to create it.
+    if (DetectVirtualDisplayState() == 0) {
         RefreshDisplayState();
         InvalidateRect(g_window, nullptr, FALSE);
         ShowToast(Tr(L"未检测到实体屏幕，已自动启用虚拟屏", L"No physical display detected; virtual display enabled"));
     } else {
-        // Failed attempts (missing admin rights, broken driver) back off ~10 min.
+        // Failed attempts (missing admin rights, driver w/o auto-monitor) back off ~10 min.
         g_vddNextAllowedTick = now + 600000;
     }
 }
@@ -2095,7 +2126,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
         case 1: ShowToast(Tr(L"虚拟屏已启用", L"Virtual display enabled")); break;
         case 2: ShowToast(Tr(L"虚拟屏驱动已就绪", L"The virtual display driver is already ready")); break;
         case 3: ShowToast(Tr(L"未找到虚拟屏驱动，请将已签名 INF 放入 drivers 文件夹", L"No virtual display driver found; put a signed INF into the drivers folder")); break;
-        default: ShowToast(Tr(L"启用失败，请以管理员身份运行后重试", L"Enable failed; run as administrator and retry")); break;
+        default: ShowToast(Tr(L"已启用适配器但未创建虚拟显示器；建议安装 Virtual Display Driver（见 drivers 文件夹说明）", L"Adapter enabled but no virtual monitor was created; install Virtual Display Driver (see drivers folder note)")); break;
         }
         return 0;
     case WM_TIMER:
